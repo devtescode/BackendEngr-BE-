@@ -11,7 +11,11 @@ module.exports.getComponents = async (req, res) => {
     const components = await Component.find().sort({
       createdAt: -1,
     });
-    console.log("Components fetched successfully:", components);
+
+    console.log(
+      "Components fetched successfully:",
+      components.length
+    );
 
     return res.status(200).json(components);
   } catch (error) {
@@ -23,7 +27,6 @@ module.exports.getComponents = async (req, res) => {
     });
   }
 };
-
 
 // ======================================================
 // GET ONE COMPONENT
@@ -53,7 +56,6 @@ module.exports.getComponent = async (req, res) => {
   }
 };
 
-
 // ======================================================
 // CREATE COMPONENT
 // POST /admin/components
@@ -71,6 +73,10 @@ module.exports.createComponent = async (req, res) => {
       details,
     } = req.body;
 
+    // --------------------------------------------
+    // VALIDATION
+    // --------------------------------------------
+
     if (
       !sku ||
       !name ||
@@ -84,6 +90,10 @@ module.exports.createComponent = async (req, res) => {
       });
     }
 
+    // --------------------------------------------
+    // CHECK DUPLICATE SKU
+    // --------------------------------------------
+
     const existing = await Component.findOne({ sku });
 
     if (existing) {
@@ -91,6 +101,10 @@ module.exports.createComponent = async (req, res) => {
         message: "A component with this SKU already exists",
       });
     }
+
+    // --------------------------------------------
+    // IMAGE
+    // --------------------------------------------
 
     let image = "";
     let imagePublicId = "";
@@ -101,6 +115,10 @@ module.exports.createComponent = async (req, res) => {
       image = result.secure_url;
       imagePublicId = result.public_id;
     }
+
+    // --------------------------------------------
+    // CREATE COMPONENT
+    // --------------------------------------------
 
     const component = await Component.create({
       sku,
@@ -114,9 +132,32 @@ module.exports.createComponent = async (req, res) => {
       imagePublicId,
     });
 
+    console.log(
+      "Component created:",
+      component._id
+    );
+
+    // ==================================================
+    // WEBSOCKET EVENT
+    // ==================================================
+
+    if (req.io) {
+      req.io.emit(
+        "component:created",
+        component
+      );
+
+      console.log(
+        "WebSocket: component:created emitted"
+      );
+    }
+
     return res.status(201).json(component);
   } catch (error) {
-    console.error("Create component error:", error);
+    console.error(
+      "Create component error:",
+      error
+    );
 
     return res.status(500).json({
       message: "Failed to create component",
@@ -124,7 +165,6 @@ module.exports.createComponent = async (req, res) => {
     });
   }
 };
-
 
 // ======================================================
 // UPDATE COMPONENT
@@ -135,7 +175,12 @@ module.exports.updateComponent = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const component = await Component.findById(id);
+    // --------------------------------------------
+    // FIND COMPONENT
+    // --------------------------------------------
+
+    const component =
+      await Component.findById(id);
 
     if (!component) {
       return res.status(404).json({
@@ -153,13 +198,16 @@ module.exports.updateComponent = async (req, res) => {
       details,
     } = req.body;
 
+    // --------------------------------------------
+    // CHECK SKU
+    // --------------------------------------------
 
-    // Check if SKU is being changed
     if (sku && sku !== component.sku) {
-      const existing = await Component.findOne({
-        sku,
-        _id: { $ne: id },
-      });
+      const existing =
+        await Component.findOne({
+          sku,
+          _id: { $ne: id },
+        });
 
       if (existing) {
         return res.status(409).json({
@@ -171,8 +219,10 @@ module.exports.updateComponent = async (req, res) => {
       component.sku = sku;
     }
 
+    // --------------------------------------------
+    // UPDATE FIELDS
+    // --------------------------------------------
 
-    // Update normal fields
     if (name !== undefined) {
       component.name = name;
     }
@@ -197,21 +247,51 @@ module.exports.updateComponent = async (req, res) => {
       component.details = details;
     }
 
+    // --------------------------------------------
+    // UPDATE IMAGE
+    // --------------------------------------------
 
-    // Upload new image if provided
     if (req.file) {
-      const result = await uploadImage(req.file.buffer);
+      const result =
+        await uploadImage(req.file.buffer);
 
       component.image = result.secure_url;
-      component.imagePublicId = result.public_id;
+      component.imagePublicId =
+        result.public_id;
     }
 
+    // --------------------------------------------
+    // SAVE
+    // --------------------------------------------
 
     await component.save();
 
+    console.log(
+      "Component updated:",
+      component._id
+    );
+
+    // ==================================================
+    // WEBSOCKET EVENT
+    // ==================================================
+
+    if (req.io) {
+      req.io.emit(
+        "component:updated",
+        component
+      );
+
+      console.log(
+        "WebSocket: component:updated emitted"
+      );
+    }
+
     return res.status(200).json(component);
   } catch (error) {
-    console.error("Update component error:", error);
+    console.error(
+      "Update component error:",
+      error
+    );
 
     return res.status(500).json({
       message: "Failed to update component",
@@ -219,7 +299,6 @@ module.exports.updateComponent = async (req, res) => {
     });
   }
 };
-
 
 // ======================================================
 // DELETE COMPONENT
@@ -230,7 +309,12 @@ module.exports.deleteComponent = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const component = await Component.findById(id);
+    // --------------------------------------------
+    // FIND COMPONENT
+    // --------------------------------------------
+
+    const component =
+      await Component.findById(id);
 
     if (!component) {
       return res.status(404).json({
@@ -238,14 +322,43 @@ module.exports.deleteComponent = async (req, res) => {
       });
     }
 
+    // --------------------------------------------
+    // DELETE
+    // --------------------------------------------
+
     await Component.findByIdAndDelete(id);
+
+    console.log(
+      "Component deleted:",
+      component._id
+    );
+
+    // ==================================================
+    // WEBSOCKET EVENT
+    // ==================================================
+
+    if (req.io) {
+      req.io.emit(
+        "component:deleted",
+        {
+          _id: component._id.toString(),
+        }
+      );
+
+      console.log(
+        "WebSocket: component:deleted emitted"
+      );
+    }
 
     return res.status(200).json({
       message: "Component deleted successfully",
       component,
     });
   } catch (error) {
-    console.error("Delete component error:", error);
+    console.error(
+      "Delete component error:",
+      error
+    );
 
     return res.status(500).json({
       message: "Failed to delete component",
