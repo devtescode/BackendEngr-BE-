@@ -22,6 +22,7 @@ module.exports.adminExists = async (req, res) => {
   }
 };
 
+
 // =========================
 // REGISTER ADMIN
 // =========================
@@ -98,6 +99,8 @@ module.exports.loginAdmin = async (req, res) => {
       process.env.ADMIN_JWT_SECRET,
       { expiresIn: "1hr" }
     );
+    console.log("Admin logged in:", admin);
+    console.log("Admin logged in:", token);
 
     return res.json({
       message: "Login successful",
