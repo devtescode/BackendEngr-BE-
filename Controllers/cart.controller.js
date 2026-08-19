@@ -13,7 +13,10 @@ module.exports.addToCart = async (req, res) => {
 
     const userId = req.user.id;
 
-    // Validate component ID
+    // ======================================================
+    // VALIDATE COMPONENT ID
+    // ======================================================
+
     if (!componentId) {
       return res.status(400).json({
         message: "Component ID is required",
@@ -26,7 +29,10 @@ module.exports.addToCart = async (req, res) => {
       });
     }
 
-    // Validate quantity
+    // ======================================================
+    // VALIDATE QUANTITY
+    // ======================================================
+
     const qty = Number(quantity);
 
     if (!Number.isInteger(qty) || qty < 1) {
@@ -35,7 +41,10 @@ module.exports.addToCart = async (req, res) => {
       });
     }
 
-    // Find component
+    // ======================================================
+    // FIND COMPONENT
+    // ======================================================
+
     const component = await Component.findById(
       componentId
     );
@@ -46,19 +55,28 @@ module.exports.addToCart = async (req, res) => {
       });
     }
 
-    // Check stock
+    // ======================================================
+    // CHECK STOCK
+    // ======================================================
+
     if (component.stock <= 0) {
       return res.status(400).json({
         message: "Component is out of stock",
       });
     }
 
-    // Find user's cart
+    // ======================================================
+    // FIND USER CART
+    // ======================================================
+
     let cart = await Cart.findOne({
       userId,
     });
 
-    // Create cart if user doesn't have one
+    // ======================================================
+    // CREATE CART IF USER DOESN'T HAVE ONE
+    // ======================================================
+
     if (!cart) {
       cart = new Cart({
         userId,
@@ -66,7 +84,10 @@ module.exports.addToCart = async (req, res) => {
       });
     }
 
-    // Find existing item
+    // ======================================================
+    // FIND EXISTING ITEM
+    // ======================================================
+
     const existingItem = cart.items.find(
       (item) =>
         item.componentId.toString() ===
@@ -81,7 +102,6 @@ module.exports.addToCart = async (req, res) => {
       const newQuantity =
         existingItem.quantity + qty;
 
-      // Check TOTAL quantity against stock
       if (newQuantity > component.stock) {
         return res.status(400).json({
           message: `Only ${component.stock} units available`,
@@ -108,10 +128,16 @@ module.exports.addToCart = async (req, res) => {
       });
     }
 
-    // Save cart
+    // ======================================================
+    // SAVE CART
+    // ======================================================
+
     await cart.save();
 
-    // Populate component information
+    // ======================================================
+    // POPULATE COMPONENT INFORMATION
+    // ======================================================
+
     const populatedCart =
       await Cart.findById(cart._id).populate(
         "items.componentId"
@@ -121,20 +147,25 @@ module.exports.addToCart = async (req, res) => {
     // SOCKET.IO REAL-TIME UPDATE
     // ======================================================
 
-    const io = req.app.get("io");
-
-    if (io) {
-      io.to(`user:${userId}`).emit(
+    if (req.io) {
+      req.io.to(userId.toString()).emit(
         "cart:updated",
         populatedCart
       );
+
+      console.log(
+        `🛒 Cart update sent to user ${userId}`
+      );
     }
+
+    // ======================================================
+    // RESPONSE
+    // ======================================================
 
     return res.status(200).json({
       message: "Cart updated successfully",
       cart: populatedCart,
     });
-
   } catch (error) {
     console.error(
       "Add to cart error:",
@@ -310,7 +341,7 @@ module.exports.removeFromCart = async (
       });
     }
 
-    // Remove item
+    
     cart.items = cart.items.filter(
       (item) =>
         item.componentId.toString() !==
@@ -319,13 +350,13 @@ module.exports.removeFromCart = async (
 
     await cart.save();
 
-    // Populate cart
+    
     const populatedCart =
       await Cart.findById(cart._id).populate(
         "items.componentId"
       );
 
-    // REAL-TIME UPDATE
+    
     const io = req.app.get("io");
 
     if (io) {
@@ -356,10 +387,15 @@ module.exports.removeFromCart = async (
 
 module.exports.getCart = async (req, res) => {
   try {
+    console.log("🛒 GET CART REQUEST");
+    console.log("USER:", req.user);
+
     const userId = req.user.id;
 
     const cart = await Cart.findOne({ userId })
       .populate("items.componentId");
+
+    console.log("CART FOUND:", cart);
 
     if (!cart) {
       return res.status(200).json({
@@ -368,7 +404,6 @@ module.exports.getCart = async (req, res) => {
     }
 
     return res.status(200).json(cart);
-
   } catch (error) {
     console.error("Get cart error:", error);
 

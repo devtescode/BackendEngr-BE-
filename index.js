@@ -124,10 +124,15 @@ app.use(express.json({ limit: "200mb" }));
 mongoose
   .connect(URI)
   .then(() => {
-    console.log("Database connected successfully Engineering Backend");
+    console.log(
+      "Database connected successfully Engineering Backend"
+    );
   })
   .catch((err) => {
-    console.error("Database connection error:", err);
+    console.error(
+      "Database connection error:",
+      err
+    );
   });
 
 // ======================================================
@@ -142,10 +147,38 @@ app.use("/engineering", userRoutes);
 // ======================================================
 
 io.on("connection", (socket) => {
-  console.log("Client connected:", socket.id);
+  console.log(
+    "🟢 Client connected:",
+    socket.id
+  );
 
-  socket.on("disconnect", () => {
-    console.log("Client disconnected:", socket.id);
+  // -----------------------------------------------
+  // USER JOINS THEIR PERSONAL ROOM
+  // -----------------------------------------------
+
+  socket.on("user:join", ({ userId }) => {
+    if (!userId) {
+      console.log("❌ No userId supplied");
+      return;
+    }
+
+    socket.join(userId);
+
+    console.log(
+      `👤 User ${userId} joined socket room`
+    );
+  });
+
+  // -----------------------------------------------
+  // DISCONNECT
+  // -----------------------------------------------
+
+  socket.on("disconnect", (reason) => {
+    console.log(
+      "🔴 Client disconnected:",
+      socket.id,
+      reason
+    );
   });
 });
 
@@ -176,5 +209,7 @@ app.use((err, req, res, next) => {
 // ======================================================
 
 server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(
+    `Server is running on port ${PORT}`
+  );
 });
