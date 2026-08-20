@@ -1,6 +1,6 @@
 const express = require("express")
 const { adminExists, registerAdmin, loginAdmin } = require("../Controllers/admin.controllers")
-const { createComponent, getComponents, deleteComponent, updateComponent, getComponent } = require("../Controllers/componentController")
+const { createComponent, getComponents, deleteComponent, updateComponent, getComponent, getAllCarts } = require("../Controllers/componentController")
 const upload = require("../middleware/upload");
 const router = express.Router()
 
@@ -14,6 +14,7 @@ router.get("/getcomponents", getComponents)
 router.delete("/delete-component/:id", deleteComponent)
 router.put("/update-component/:id", upload.single("image"), updateComponent)
 router.get("/getonecomponent/:id", getComponent)
+router.get("/getallcarts", getAllCarts)
 // router.delete("/:id", deleteComponent);
 // router.get("/:id", getComponent);
 

@@ -1,5 +1,7 @@
 const Component = require("../Models/component");
 const uploadImage = require("../utils/uploadImage");
+const Cart = require("../Models/cart");
+
 
 // ======================================================
 // GET ALL COMPONENTS
@@ -362,6 +364,37 @@ module.exports.deleteComponent = async (req, res) => {
 
     return res.status(500).json({
       message: "Failed to delete component",
+      error: error.message,
+    });
+  }
+};
+
+module.exports.getAllCarts = async (req, res) => {
+  try {
+    const carts = await Cart.find({
+      "items.0": { $exists: true },
+    })
+      .populate(
+        "userId",
+        "fullName email matric"
+      )
+      .populate(
+        "items.componentId",
+        "name sku price image category"
+      )
+      .sort({ updatedAt: -1 });
+
+    return res.status(200).json({
+      carts,
+    });
+  } catch (error) {
+    console.error(
+      "Get all carts error:",
+      error
+    );
+
+    return res.status(500).json({
+      message: "Failed to get user carts",
       error: error.message,
     });
   }
