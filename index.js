@@ -1,71 +1,3 @@
-// const express = require('express');
-// const http = require('http');
-// const mongoose = require('mongoose');
-// require('dotenv').config();
-// const cors = require('cors');
-// const userRoutes = require('./Routes/user.routes');
-// const adminRoutes = require('./Routes/user.adminRoutes');
-// // const foodRoutes = require('./Routes/food.routes');
-// // const cartRoutes = require('./Routes/cart.routes');
-// // const Payment = require('./Routes/payments')
-// // const paystackroute = require('./Controllers/paystackWebhook');
-// // const settingRoutes = require('./Routes/settings.routes');
-
-// // const cloudinary = require("./config/cloudinary"); 
-
-
-// const app = express();
-// const server = http.createServer(app); // Create the server instance
-// const PORT = process.env.PORT || 4500;
-// const URI = process.env.URI;
-
-
-
-// app.use(cors());
-// app.use(express.urlencoded({ extended: true, limit: '200mb' }));
-// app.use(express.json({ limit: '200mb' }));
-// // app.use('/food', foodRoutes);
-// // app.use('/cart', cartRoutes);
-// // app.use('/orders', require('./Routes/order.routes'));
-// // app.use('/settings', settingRoutes);
-
-// mongoose
-//     .connect(URI)
-//     .then(() => {
-//         console.log('Database connected successfully Engineering Backend');
-//     })
-//     .catch((err) => {
-//         console.error('Database connection error:', err);
-// });
-
-
-// app.use('/admin', adminRoutes);
-// app.use('/engineering', userRoutes);
-
-// // app.use(
-// //   "/api/paystack",
-// //   express.raw({ type: "application/json" }), // IMPORTANT: only JSON
-// //   (req, res, next) => {
-// //     req.rawBody = req.body; // Buffer
-// //     next();
-// //   },
-// //   paystackroute
-// // );
-
-// app.get('/', (req, res) => {
-//     res.status(200).json({ message: 'Welcome to Engineering Backend'});
-// });
-
-// app.use((err, req, res, next) => {
-//     console.error('Error:', err.message);
-//     res.status(500).json({ message: 'Internal Server Error' });
-// });
-
-// server.listen(PORT, () => {
-//     console.log(`Server is running on port ${PORT}`);
-// });
-
-
 const express = require("express");
 const http = require("http");
 const mongoose = require("mongoose");
@@ -75,6 +7,8 @@ const { Server } = require("socket.io");
 
 const userRoutes = require("./Routes/user.routes");
 const adminRoutes = require("./Routes/user.adminRoutes");
+const paystackRoutes = require("./Routes/paystack.routes");
+const { paystackWebhook } = require("./Controllers/paystack.controller");
 
 const app = express();
 const server = http.createServer(app);
@@ -114,6 +48,25 @@ app.use(
   })
 );
 
+// ======================================================
+// ⚠️ PAYSTACK WEBHOOK — MUST BE REGISTERED BEFORE
+// express.json() / express.urlencoded()
+// ======================================================
+//
+// Paystack signs the RAW request body. If express.json()
+// runs first, it consumes the stream and converts the
+// body into an object, breaking HMAC verification.
+//
+app.post(
+  "/api/paystack/webhook",
+  express.raw({ type: "application/json" }),
+  paystackWebhook
+);
+
+// ======================================================
+// NORMAL BODY PARSERS (for all other routes)
+// ======================================================
+
 app.use(express.urlencoded({ extended: true, limit: "200mb" }));
 app.use(express.json({ limit: "200mb" }));
 
@@ -124,15 +77,10 @@ app.use(express.json({ limit: "200mb" }));
 mongoose
   .connect(URI)
   .then(() => {
-    console.log(
-      "Database connected successfully Engineering Backend"
-    );
+    console.log("Database connected successfully Engineering Backend");
   })
   .catch((err) => {
-    console.error(
-      "Database connection error:",
-      err
-    );
+    console.error("Database connection error:", err);
   });
 
 // ======================================================
@@ -141,20 +89,14 @@ mongoose
 
 app.use("/admin", adminRoutes);
 app.use("/engineering", userRoutes);
+app.use("/api/paystack", paystackRoutes);
 
 // ======================================================
 // SOCKET CONNECTION
 // ======================================================
 
 io.on("connection", (socket) => {
-  console.log(
-    "🟢 Client connected:",
-    socket.id
-  );
-
-  // -----------------------------------------------
-  // USER JOINS THEIR PERSONAL ROOM
-  // -----------------------------------------------
+  console.log("🟢 Client connected:", socket.id);
 
   socket.on("user:join", ({ userId }) => {
     if (!userId) {
@@ -163,22 +105,11 @@ io.on("connection", (socket) => {
     }
 
     socket.join(userId);
-
-    console.log(
-      `👤 User ${userId} joined socket room`
-    );
+    console.log(`👤 User ${userId} joined socket room`);
   });
 
-  // -----------------------------------------------
-  // DISCONNECT
-  // -----------------------------------------------
-
   socket.on("disconnect", (reason) => {
-    console.log(
-      "🔴 Client disconnected:",
-      socket.id,
-      reason
-    );
+    console.log("🔴 Client disconnected:", socket.id, reason);
   });
 });
 
@@ -198,7 +129,6 @@ app.get("/", (req, res) => {
 
 app.use((err, req, res, next) => {
   console.error("Error:", err.message);
-
   res.status(500).json({
     message: "Internal Server Error",
   });
@@ -209,7 +139,5 @@ app.use((err, req, res, next) => {
 // ======================================================
 
 server.listen(PORT, () => {
-  console.log(
-    `Server is running on port ${PORT}`
-  );
+  console.log(`Server is running on port ${PORT}`);
 });
