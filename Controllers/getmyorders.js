@@ -131,7 +131,6 @@ module.exports.getOrderById = async (req, res) => {
         message: "Receipt not found.",
       });
     }
-
     // =================================================
     // SHAPE RESPONSE
     // =================================================
