@@ -1,7 +1,7 @@
 const express = require("express")
 const { usersignup, userlogin } = require("../Controllers/user.controllers")
 const { addToCart, updateCartQuantity, removeFromCart, getCart } = require("../Controllers/cart.controller")
-const { getMyOrders } = require("../Controllers/getmyorders")
+const { getMyOrders, getOrderById } = require("../Controllers/getmyorders")
 const router = express.Router()
 // const upload = require("../middleware/upload");
 const { verifyToken } = require("../middleware/auth");
@@ -28,7 +28,7 @@ router.get(
 );
 
 router.get("/getorders", verifyToken, getMyOrders)
-
+router.get("/orders/:id", verifyToken, getOrderById);
 
 
 module.exports = router
