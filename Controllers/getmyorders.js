@@ -4,6 +4,7 @@
 const PaymentOrder = require("../Models/paymentOrder");
 
 module.exports.getMyOrders = async (req, res) => {
+    console.log("🔵 getMyOrders called for user:", req.user?.id);
   try {
     const userId = req.user.id;
 
