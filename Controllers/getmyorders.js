@@ -65,65 +65,65 @@ module.exports.getMyOrders = async (req, res) => {
 // Enforces ownership: a user can only fetch their
 // own paid orders.
 //
-module.exports.getOrderById = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { id } = req.params;
+// module.exports.getOrderById = async (req, res) => {
+//   try {
+//     const userId = req.user.id;
+//     const { id } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        message: "Invalid receipt ID.",
-      });
-    }
+//     if (!mongoose.Types.ObjectId.isValid(id)) {
+//       return res.status(400).json({
+//         message: "Invalid receipt ID.",
+//       });
+//     }
 
-    const order = await PaymentOrder.findOne({
-      _id: id,
-      userId,
-      paymentStatus: "paid",
-    })
-      .populate("items.componentId", "image sku name")
-      .lean();
+//     const order = await PaymentOrder.findOne({
+//       _id: id,
+//       userId,
+//       paymentStatus: "paid",
+//     })
+//       .populate("items.componentId", "image sku name")
+//       .lean();
 
-    if (!order) {
-      return res.status(404).json({
-        message: "Receipt not found.",
-      });
-    }
+//     if (!order) {
+//       return res.status(404).json({
+//         message: "Receipt not found.",
+//       });
+//     }
 
-    const shaped = {
-      id: order._id,
-      reference: order.reference,
-      items: order.items.map((it) => ({
-        componentId: it.componentId?._id || it.componentId,
-        name: it.name,
-        price: it.price,
-        quantity: it.quantity,
-        image: it.componentId?.image || null,
-        sku: it.componentId?.sku || null,
-      })),
-      subtotal: order.amount / 100,
-      total: order.amount / 100,
-      currency: order.currency,
-      status: "Paid",
-      channel: order.paystackChannel || null,
-      paidAt: order.paystackPaidAt || order.paidAt || order.createdAt,
-      createdAt: order.createdAt,
-      paystackTransactionId: order.paystackTransactionId || null,
-      paystackFees: order.paystackFees ? order.paystackFees / 100 : 0,
-      customerEmail: order.paystackCustomer?.email || null,
-    };
+//     const shaped = {
+//       id: order._id,
+//       reference: order.reference,
+//       items: order.items.map((it) => ({
+//         componentId: it.componentId?._id || it.componentId,
+//         name: it.name,
+//         price: it.price,
+//         quantity: it.quantity,
+//         image: it.componentId?.image || null,
+//         sku: it.componentId?.sku || null,
+//       })),
+//       subtotal: order.amount / 100,
+//       total: order.amount / 100,
+//       currency: order.currency,
+//       status: "Paid",
+//       channel: order.paystackChannel || null,
+//       paidAt: order.paystackPaidAt || order.paidAt || order.createdAt,
+//       createdAt: order.createdAt,
+//       paystackTransactionId: order.paystackTransactionId || null,
+//       paystackFees: order.paystackFees ? order.paystackFees / 100 : 0,
+//       customerEmail: order.paystackCustomer?.email || null,
+//     };
 
-    return res.status(200).json({
-      message: "Receipt fetched",
-      order: shaped,
-    });
-  } catch (error) {
-    console.error(
-      "Get order by ID error:",
-      error.response?.data || error.message
-    );
-    return res.status(500).json({
-      message: "Unable to load receipt. Please try again.",
-    });
-  }
-};
+//     return res.status(200).json({
+//       message: "Receipt fetched",
+//       order: shaped,
+//     });
+//   } catch (error) {
+//     console.error(
+//       "Get order by ID error:",
+//       error.response?.data || error.message
+//     );
+//     return res.status(500).json({
+//       message: "Unable to load receipt. Please try again.",
+//     });
+//   }
+// };
