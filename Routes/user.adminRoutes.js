@@ -16,6 +16,7 @@ router.put("/update-component/:id", upload.single("image"), updateComponent)
 router.get("/getonecomponent/:id", getComponent)
 router.get("/getallcarts", getAllCarts)
 router.get("/getallusers", getAllUsers)
+
 // router.delete("/:id", deleteComponent);
 // router.get("/:id", getComponent);
 
