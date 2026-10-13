@@ -280,64 +280,134 @@ module.exports.paystackWebhook = async (req, res) => {
 
     console.log("💳 PAYSTACK WEBHOOK EVENT:", event.event);
 
-    if (event.event !== "charge.success") {
-      return;
-    }
+    // =================================================
+    // HANDLE charge.success
+    // =================================================
+    if (event.event === "charge.success") {
+      const { reference, amount, currency, paid_at } = event.data;
 
-    const { reference, amount, currency, paid_at } = event.data;
+      if (!reference) {
+        console.warn("Webhook: missing reference");
+        return;
+      }
 
-    if (!reference) {
-      console.warn("Webhook: missing reference");
-      return;
-    }
+      const order = await PaymentOrder.findOne({ reference });
 
-    const order = await PaymentOrder.findOne({ reference });
+      if (!order) {
+        console.warn(
+          `Webhook: no PaymentOrder found for reference ${reference}`
+        );
+        return;
+      }
 
-    if (!order) {
-      console.warn(
-        `Webhook: no PaymentOrder found for reference ${reference}`
-      );
-      return;
-    }
+      // Idempotent — if already paid, do nothing.
+      if (order.paymentStatus === "paid") {
+        console.log(
+          `Webhook: order ${reference} already marked paid`
+        );
+        return;
+      }
 
-    // Idempotent — if already paid, do nothing.
-    if (order.paymentStatus === "paid") {
+      // Sanity checks against what we stored.
+      if (
+        amount !== order.amount ||
+        currency !== order.currency
+      ) {
+        console.error(
+          `Webhook: amount/currency mismatch for ${reference}`,
+          {
+            received: { amount, currency },
+            stored: { amount: order.amount, currency: order.currency },
+          }
+        );
+        return;
+      }
+
+      // =================================================
+      // UPDATE ORDER STATUS
+      // =================================================
+      order.paymentStatus = "paid";
+      order.paidAt = paid_at ? new Date(paid_at) : new Date();
+
+      // =================================================
+      // STORE EXTRA PAYSTACK DETAILS
+      // =================================================
+      order.paystackTransactionId = String(event.data.id || "");
+      order.paystackChannel = event.data.channel || "";
+      order.paystackGatewayResponse = event.data.gateway_response || "";
+      order.paystackFees = event.data.fees;
+      order.paystackPaidAt = paid_at ? new Date(paid_at) : null;
+
+      if (event.data.authorization) {
+        order.paystackAuthorization = {
+          authorization_code:
+            event.data.authorization.authorization_code,
+          card_type: event.data.authorization.card_type,
+          last4: event.data.authorization.last4,
+          exp_month: event.data.authorization.exp_month,
+          exp_year: event.data.authorization.exp_year,
+          bin: event.data.authorization.bin,
+          bank: event.data.authorization.bank,
+        };
+      }
+
+      if (event.data.customer) {
+        order.paystackCustomer = {
+          email: event.data.customer.email,
+          customer_code: event.data.customer.customer_code,
+        };
+      }
+
+      // Optional: store the entire Paystack payload for audit.
+      order.paystackRawData = event.data;
+
+      await order.save();
+
+      console.log(`✅ Webhook: order ${reference} marked paid`);
+      console.log(`   Paystack ID: ${event.data.id}`);
+      console.log(`   Channel: ${event.data.channel}`);
       console.log(
-        `Webhook: order ${reference} already marked paid`
+        `   Fee: ₦${((event.data.fees || 0) / 100).toLocaleString("en-NG")}`
       );
+
+      // =================================================
+      // CLEAR THE USER'S CART
+      // =================================================
+      await Cart.findOneAndUpdate(
+        { userId: order.userId },
+        { $set: { items: [] } }
+      );
+
+      // =================================================
+      // REAL-TIME CART UPDATE VIA SOCKET
+      // =================================================
+      req.io
+        ?.to(String(order.userId))
+        .emit("cart:updated", { items: [] });
+
       return;
     }
 
-    // Sanity checks against what we stored.
-    if (
-      amount !== order.amount ||
-      currency !== order.currency
-    ) {
-      console.error(
-        `Webhook: amount/currency mismatch for ${reference}`,
-        { received: { amount, currency }, stored: { amount: order.amount, currency: order.currency } }
+    // =================================================
+    // HANDLE charge.failed
+    // =================================================
+    if (event.event === "charge.failed") {
+      const { reference } = event.data;
+      if (!reference) return;
+
+      await PaymentOrder.findOneAndUpdate(
+        { reference },
+        { $set: { paymentStatus: "failed" } }
       );
+
+      console.log(`❌ Webhook: order ${reference} marked failed`);
       return;
     }
 
-    order.paymentStatus = "paid";
-    order.paidAt = paid_at ? new Date(paid_at) : new Date();
-    await order.save();
-
-    console.log(`✅ Webhook: order ${reference} marked paid`);
-
     // =================================================
-    // OPTIONAL: CLEAR THE USER'S CART
+    // OTHER EVENTS — log and ignore
     // =================================================
-    await Cart.findOneAndUpdate(
-      { userId: order.userId },
-      { $set: { items: [] } }
-    );
-
-    // Optional: emit socket event so the cart page
-    // refreshes in real time.
-    // const io = req.app.get("io");
-    // io?.to(String(order.userId)).emit("cart:updated", { items: [] });
+    console.log(`ℹ️ Webhook: unhandled event "${event.event}"`);
   } catch (error) {
     console.error(
       "Paystack webhook error:",
