@@ -58,6 +58,13 @@ const paymentOrderSchema = new mongoose.Schema(
     paystackRawData: { type: mongoose.Schema.Types.Mixed }, // full payload (optional)
 
     paidAt: { type: Date }, // your app's notion of when it was paid
+    // Models/paymentOrder.js
+    pickupStatus: {
+      type: String,
+      enum: ["Paid", "Ready", "Collected"],
+      default: "Paid",
+      index: true,
+    },
   },
   { timestamps: true }
 );

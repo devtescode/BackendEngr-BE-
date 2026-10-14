@@ -1,67 +1,126 @@
 // =====================================================
-// GET PAID ORDERS FOR THE LOGGED-IN USER
+// GET MY ORDERS + GET ORDER BY ID
 // =====================================================
 const PaymentOrder = require("../Models/paymentOrder");
 const mongoose = require("mongoose");
 
+// =====================================================
+// HELPERS
+// =====================================================
 
-module.exports.getMyOrders = async (req, res) => {
-    console.log("🔵 getMyOrders called for user:", req.user?.id);
-    try {
-        const userId = req.user.id;
-
-        const orders = await PaymentOrder.find({
-            userId,
-            paymentStatus: "paid",
-        })
-            .sort({ paidAt: -1, createdAt: -1 })
-            .populate("items.componentId", "image sku name")
-            .lean();
-
-        const shaped = orders.map((o) => ({
-            id: o._id,
-            reference: o.reference,
-            items: o.items.map((it) => ({
-                componentId: it.componentId?._id || it.componentId,
-                name: it.name,
-                price: it.price,             // keep as stored
-                quantity: it.quantity,
-                image: it.componentId?.image || null,
-                sku: it.componentId?.sku || null,
-            })),
-            total: o.amount / 100,         // kobo → naira
-            currency: o.currency,
-            status: "Paid",
-            channel: o.paystackChannel || null,
-            paidAt: o.paystackPaidAt || o.paidAt || o.createdAt,
-            createdAt: o.createdAt,
-        }));
-
-        return res.status(200).json({
-            message: "Orders fetched",
-            orders: shaped,
-        });
-    } catch (error) {
-        console.error(
-            "Get orders error:",
-            error.response?.data || error.message
-        );
-        return res.status(500).json({
-            message: "Unable to load orders. Please try again.",
-        });
-    }
+/**
+ * Convert a MongoDB ObjectId (or plain string) into
+ * a plain string, safely.
+ */
+const asIdString = (value) => {
+  if (value == null) return "";
+  return String(value);
 };
 
+/**
+ * Shape a single item, handling both populated and
+ * non-populated componentId shapes.
+ */
+const shapeItem = (it) => {
+  const populated =
+    it?.componentId && typeof it.componentId === "object"
+      ? it.componentId
+      : null;
 
+  return {
+    componentId: asIdString(
+      populated?._id ?? it?.componentId ?? ""
+    ),
+    name: it?.name || populated?.name || "",
+    price: Number(it?.price) || 0,
+    quantity: Number(it?.quantity) || 0,
+    image: populated?.image || null,
+    sku: populated?.sku || null,
+  };
+};
 
+/**
+ * Normalize the pickup status.
+ * Default to "Paid" if the admin hasn't touched it yet.
+ */
+const normalizeStatus = (order) => {
+  const s = order?.pickupStatus;
+  if (s === "Ready" || s === "Collected" || s === "Paid") {
+    return s;
+  }
+  return "Paid";
+};
 
+// =====================================================
+// GET ALL PAID ORDERS FOR THE LOGGED-IN USER
+// =====================================================
+//
+// Feeds /orders and /receipts list pages.
+// Sorted by most recent first.
+//
+module.exports.getMyOrders = async (req, res) => {
+  console.log("🔵 getMyOrders called for user:", req.user?.id);
 
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        message: "Unauthorized.",
+      });
+    }
+
+    const orders = await PaymentOrder.find({
+      userId,
+      paymentStatus: "paid",
+    })
+      .sort({ paystackPaidAt: -1, paidAt: -1, createdAt: -1 })
+      .populate("items.componentId", "image sku name")
+      .lean();
+
+    const shaped = orders.map((o) => {
+      const amountKobo = Number(o.amount) || 0;
+
+      return {
+        id: asIdString(o._id),
+        reference: o.reference || "",
+        items: Array.isArray(o.items)
+          ? o.items.map(shapeItem)
+          : [],
+        total: amountKobo / 100,
+        currency: o.currency || "NGN",
+        status: normalizeStatus(o),         // "Paid" | "Ready" | "Collected"
+        channel: o.paystackChannel || null,
+        paidAt:
+          o.paystackPaidAt ||
+          o.paidAt ||
+          o.createdAt,
+        createdAt: o.createdAt,
+        collectedAt: o.collectedAt || null,
+      };
+    });
+
+    return res.status(200).json({
+      message: "Orders fetched",
+      count: shaped.length,
+      orders: shaped,
+    });
+  } catch (error) {
+    console.error(
+      "Get orders error:",
+      error.response?.data || error.message
+    );
+    return res.status(500).json({
+      message: "Unable to load orders. Please try again.",
+    });
+  }
+};
 
 // =====================================================
 // GET A SINGLE ORDER (RECEIPT) BY ID
 // =====================================================
 //
-// Feeds the /orders/$id receipt page.
+// Feeds the /receipts/:id detail page.
 // Enforces ownership: a user can only fetch their
 // own paid orders.
 //
@@ -86,9 +145,9 @@ module.exports.getOrderById = async (req, res) => {
     // =================================================
     // GUARD: ID PRESENCE
     // =================================================
-    // Catches the "undefined" / "null" string case that
-    // happens when the frontend builds the URL before
-    // the order's id is populated.
+    // Catches the "undefined" / "null" string case
+    // that happens when the frontend builds the URL
+    // before the order's id is populated.
     //
     if (!rawId || rawId === "undefined" || rawId === "null") {
       console.warn(
@@ -103,8 +162,8 @@ module.exports.getOrderById = async (req, res) => {
     // GUARD: ID FORMAT
     // =================================================
     // Mongoose casts the string to ObjectId; without
-    // this check, "abc" would throw a CastError and hit
-    // the 500 handler.
+    // this check, "abc" throws a CastError and lands
+    // in the 500 handler.
     //
     if (!mongoose.Types.ObjectId.isValid(rawId)) {
       console.warn(
@@ -131,6 +190,7 @@ module.exports.getOrderById = async (req, res) => {
         message: "Receipt not found.",
       });
     }
+
     // =================================================
     // SHAPE RESPONSE
     // =================================================
@@ -138,37 +198,28 @@ module.exports.getOrderById = async (req, res) => {
     const items = Array.isArray(order.items) ? order.items : [];
 
     const shaped = {
-      // Coerce ObjectId → plain string so the frontend
-      // never receives a Mongoose type.
-      id: String(order._id),
+      id: asIdString(order._id),
       reference: order.reference || "",
-      items: items.map((it) => {
-        const populated =
-          it.componentId && typeof it.componentId === "object"
-            ? it.componentId
-            : null;
-
-        return {
-          componentId: String(
-            populated?._id ?? it.componentId ?? ""
-          ),
-          name: it.name || "",
-          price: Number(it.price) || 0,
-          quantity: Number(it.quantity) || 0,
-          image: populated?.image || null,
-          sku: populated?.sku || null,
-        };
-      }),
+      items: items.map(shapeItem),
       subtotal: amountKobo / 100,
       total: amountKobo / 100,
       currency: order.currency || "NGN",
-      status: "Paid",
+
+      // ⬇️ FIXED — return the actual pickup status
+      // (previously hardcoded to "Paid", which made
+      // collected orders still show as Paid on the
+      // receipt detail page)
+      status: normalizeStatus(order),
+
       channel: order.paystackChannel || null,
       paidAt:
         order.paystackPaidAt ||
         order.paidAt ||
         order.createdAt,
       createdAt: order.createdAt,
+      collectedAt: order.collectedAt || null,
+
+      // Receipt-only fields
       paystackTransactionId:
         order.paystackTransactionId || null,
       paystackFees: order.paystackFees
