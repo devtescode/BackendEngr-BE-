@@ -20,6 +20,7 @@ const {
 const {
   searchOrders,
   updatePickupStatus,
+  getCollectedOrders
 } = require("../Controllers/pickup.controller");
 
 const upload = require("../middleware/upload");
@@ -69,5 +70,11 @@ router.get("/getallusers", verifyAdminToken, getAllUsers);
 // =====================================================
 router.get("/pickup/search", verifyAdminToken, searchOrders);
 router.put("/pickup/:id/status", verifyAdminToken, updatePickupStatus);
+router.get(
+  "/pickup/collected",
+  verifyAdminToken,
+  getCollectedOrders
+);
+
 
 module.exports = router;

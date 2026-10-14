@@ -228,3 +228,78 @@ module.exports.updatePickupStatus = async (req, res) => {
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+
+
+// =====================================================
+// GET ALL COLLECTED ORDERS
+// =====================================================
+module.exports.getCollectedOrders = async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  try {
+    const orders = await PaymentOrder.find({
+      paymentStatus: "paid",
+      pickupStatus: "Collected",
+    })
+      .sort({ collectedAt: -1, paystackPaidAt: -1, createdAt: -1 })
+      .populate("items.componentId", "image sku name")
+      .populate("userId", "fullName matric email")
+      .limit(500)
+      .lean();
+
+    const shaped = orders.map((o) => {
+      const user =
+        o.userId && typeof o.userId === "object" ? o.userId : null;
+
+      return {
+        id: String(o._id),
+        reference: o.reference,
+        userId: String(user?._id || o.userId || ""),
+        userName: user?.fullName || "Unknown",
+        matric: user?.matric || "",
+        email: user?.email || null,
+        items: Array.isArray(o.items)
+          ? o.items.map((it) => {
+              const populated =
+                it.componentId && typeof it.componentId === "object"
+                  ? it.componentId
+                  : null;
+
+              return {
+                componentId: String(
+                  populated?._id ?? it.componentId ?? ""
+                ),
+                name: it.name || "",
+                price: Number(it.price) || 0,
+                quantity: Number(it.quantity) || 0,
+                image: populated?.image || null,
+                sku: populated?.sku || null,
+              };
+            })
+          : [],
+        total: Number(o.amount || 0) / 100,
+        currency: o.currency || "NGN",
+        channel: o.paystackChannel || null,
+        paidAt: o.paystackPaidAt || o.paidAt || o.createdAt,
+        createdAt: o.createdAt,
+        collectedAt: o.collectedAt || null,
+        status: "Collected",
+      };
+    });
+
+    return res.status(200).json({
+      message: "Collected orders fetched",
+      count: shaped.length,
+      orders: shaped,
+    });
+  } catch (error) {
+    console.error(
+      "Get collected orders error:",
+      error.response?.data || error.message
+    );
+    return res.status(500).json({
+      message: "Unable to load collected orders.",
+    });
+  }
+};
