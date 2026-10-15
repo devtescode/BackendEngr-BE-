@@ -1,6 +1,7 @@
 const Component = require("../Models/component");
 const uploadImage = require("../utils/uploadImage");
 const Cart = require("../Models/cart");
+const mongoose = require("mongoose");
 
 
 // ======================================================
@@ -307,49 +308,70 @@ module.exports.updateComponent = async (req, res) => {
 // DELETE /admin/components/:id
 // ======================================================
 
+// Controllers/componentController.js
+
+
+// =====================================================
+// DELETE COMPONENT
+// =====================================================
 module.exports.deleteComponent = async (req, res) => {
   try {
     const { id } = req.params;
 
     // --------------------------------------------
-    // FIND COMPONENT
+    // GUARD: MISSING / MALFORMED ID
     // --------------------------------------------
-
-    const component =
-      await Component.findById(id);
-
-    if (!component) {
-      return res.status(404).json({
-        message: "Component not found",
+    // Catches:
+    //   - undefined / null / empty
+    //   - literal strings "undefined" and "null"
+    //     (these happen when a broken frontend link
+    //      passes an undefined variable into the URL)
+    //   - non-ObjectId strings like "abc"
+    //
+    if (
+      !id ||
+      id === "undefined" ||
+      id === "null" ||
+      !mongoose.Types.ObjectId.isValid(id)
+    ) {
+      console.warn(
+        `deleteComponent: rejected invalid id "${id}"`
+      );
+      return res.status(400).json({
+        message: "Invalid component ID.",
       });
     }
 
     // --------------------------------------------
-    // DELETE
+    // FIND + DELETE (single atomic operation)
     // --------------------------------------------
+    // `findByIdAndDelete` returns the document
+    // that was deleted, or null if nothing matched.
+    // No need for a separate find + delete.
+    //
+    const component = await Component.findByIdAndDelete(id);
 
-    await Component.findByIdAndDelete(id);
+    if (!component) {
+      return res.status(404).json({
+        message: "Component not found.",
+      });
+    }
 
-    console.log(
-      "Component deleted:",
-      component._id
-    );
+    console.log("🗑️ Component deleted:", component._id);
 
-    // ==================================================
-    // WEBSOCKET EVENT
-    // ==================================================
-
+    // --------------------------------------------
+    // WEBSOCKET BROADCAST
+    // --------------------------------------------
+    // Emit only the ID — the frontend removes the
+    // matching row. Emitting the full object would
+    // be wasteful since it's already gone.
+    //
     if (req.io) {
-      req.io.emit(
-        "component:deleted",
-        {
-          _id: component._id.toString(),
-        }
-      );
+      req.io.emit("component:deleted", {
+        _id: component._id.toString(),
+      });
 
-      console.log(
-        "WebSocket: component:deleted emitted"
-      );
+      console.log("📡 WebSocket: component:deleted emitted");
     }
 
     return res.status(200).json({
@@ -359,12 +381,11 @@ module.exports.deleteComponent = async (req, res) => {
   } catch (error) {
     console.error(
       "Delete component error:",
-      error
+      error.response?.data || error.message
     );
 
     return res.status(500).json({
-      message: "Failed to delete component",
-      error: error.message,
+      message: "Failed to delete component.",
     });
   }
 };
