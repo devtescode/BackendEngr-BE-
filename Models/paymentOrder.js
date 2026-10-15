@@ -65,6 +65,7 @@ const paymentOrderSchema = new mongoose.Schema(
       default: "Paid",
       index: true,
     },
+    collectedAt: { type: Date }, // timestamp when the order was collected
   },
   { timestamps: true }
 );

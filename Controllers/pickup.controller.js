@@ -323,6 +323,7 @@ module.exports.getCollectedOrders = async (req, res) => {
         collectedAt: o.collectedAt || null,
         status: "Collected",
       };
+      
     });
 
     return res.status(200).json({
