@@ -89,7 +89,7 @@ module.exports.getMyOrders = async (req, res) => {
           : [],
         total: amountKobo / 100,
         currency: o.currency || "NGN",
-        status: normalizeStatus(o),         // "Paid" | "Ready" | "Collected"
+        status: normalizeStatus(o),
         channel: o.paystackChannel || null,
         paidAt:
           o.paystackPaidAt ||
