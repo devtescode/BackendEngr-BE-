@@ -238,6 +238,15 @@ module.exports.verifyPayment = async (req, res) => {
 // express.json() middleware, or with express.raw(),
 // because the signature is computed over the RAW body.
 //
+// =====================================================
+// Top of paystack.controller.js — make sure these
+// models are imported alongside the others.
+// =====================================================
+// const Cart = require("../Models/cart");
+// const Component = require("../Models/component");
+// const PaymentOrder = require("../Models/paymentOrder");
+// const mongoose = require("mongoose");
+
 module.exports.paystackWebhook = async (req, res) => {
   try {
     const secret = process.env.PAYSTACK_SECRET_KEY;
@@ -250,9 +259,6 @@ module.exports.paystackWebhook = async (req, res) => {
     // =================================================
     // VERIFY SIGNATURE
     // =================================================
-    // Paystack signs the raw request body with HMAC-SHA512
-    // using your secret key. If it doesn't match, ignore.
-    //
     const hash = crypto
       .createHmac("sha512", secret)
       .update(req.body) // req.body must be a Buffer here
@@ -268,9 +274,6 @@ module.exports.paystackWebhook = async (req, res) => {
     // =================================================
     // ACKNOWLEDGE IMMEDIATELY
     // =================================================
-    // Return 200 BEFORE processing. Paystack retries for
-    // up to 72 hours if you don't respond quickly.
-    //
     res.sendStatus(200);
 
     // =================================================
@@ -291,6 +294,14 @@ module.exports.paystackWebhook = async (req, res) => {
         return;
       }
 
+      // =================================================
+      // DUPLICATE TRANSACTION GUARD #1
+      // =================================================
+      // If we've already seen this Paystack reference,
+      // bail out. The atomic findOneAndUpdate below
+      // prevents a race where two identical webhooks
+      // arrive at the same time.
+      //
       const order = await PaymentOrder.findOne({ reference });
 
       if (!order) {
@@ -300,7 +311,7 @@ module.exports.paystackWebhook = async (req, res) => {
         return;
       }
 
-      // Idempotent — if already paid, do nothing.
+      // Idempotency — if already paid, do nothing.
       if (order.paymentStatus === "paid") {
         console.log(
           `Webhook: order ${reference} already marked paid`
@@ -308,60 +319,84 @@ module.exports.paystackWebhook = async (req, res) => {
         return;
       }
 
-      // Sanity checks against what we stored.
-      if (
-        amount !== order.amount ||
-        currency !== order.currency
-      ) {
+      // =================================================
+      // SANITY CHECKS
+      // =================================================
+      if (amount !== order.amount || currency !== order.currency) {
         console.error(
           `Webhook: amount/currency mismatch for ${reference}`,
           {
             received: { amount, currency },
-            stored: { amount: order.amount, currency: order.currency },
+            stored: {
+              amount: order.amount,
+              currency: order.currency,
+            },
           }
         );
         return;
       }
 
       // =================================================
-      // UPDATE ORDER STATUS
+      // DUPLICATE TRANSACTION GUARD #2 (atomic)
       // =================================================
-      order.paymentStatus = "paid";
-      order.paidAt = paid_at ? new Date(paid_at) : new Date();
+      // Two webhooks can arrive simultaneously for the
+      // same reference (Paystack retries). The check
+      // above is not atomic — both could pass before
+      // either saves. To make it bulletproof, use
+      // findOneAndUpdate that only sets paymentStatus
+      // when it's still "pending".
+      //
+      // If the update returns null, another webhook
+      // already flipped it to "paid". Do nothing.
+      //
+      const claimed = await PaymentOrder.findOneAndUpdate(
+        {
+          reference,
+          paymentStatus: "pending", // ← the guard
+        },
+        {
+          $set: {
+            paymentStatus: "paid",
+            paidAt: paid_at ? new Date(paid_at) : new Date(),
+            paystackTransactionId: String(event.data.id || ""),
+            paystackChannel: event.data.channel || "",
+            paystackGatewayResponse:
+              event.data.gateway_response || "",
+            paystackFees: event.data.fees,
+            paystackPaidAt: paid_at ? new Date(paid_at) : null,
+            paystackAuthorization: event.data.authorization
+              ? {
+                  authorization_code:
+                    event.data.authorization.authorization_code,
+                  card_type:
+                    event.data.authorization.card_type,
+                  last4: event.data.authorization.last4,
+                  exp_month:
+                    event.data.authorization.exp_month,
+                  exp_year: event.data.authorization.exp_year,
+                  bin: event.data.authorization.bin,
+                  bank: event.data.authorization.bank,
+                }
+              : undefined,
+            paystackCustomer: event.data.customer
+              ? {
+                  email: event.data.customer.email,
+                  customer_code:
+                    event.data.customer.customer_code,
+                }
+              : undefined,
+            paystackRawData: event.data,
+          },
+        },
+        { new: true }
+      );
 
-      // =================================================
-      // STORE EXTRA PAYSTACK DETAILS
-      // =================================================
-      order.paystackTransactionId = String(event.data.id || "");
-      order.paystackChannel = event.data.channel || "";
-      order.paystackGatewayResponse = event.data.gateway_response || "";
-      order.paystackFees = event.data.fees;
-      order.paystackPaidAt = paid_at ? new Date(paid_at) : null;
-
-      if (event.data.authorization) {
-        order.paystackAuthorization = {
-          authorization_code:
-            event.data.authorization.authorization_code,
-          card_type: event.data.authorization.card_type,
-          last4: event.data.authorization.last4,
-          exp_month: event.data.authorization.exp_month,
-          exp_year: event.data.authorization.exp_year,
-          bin: event.data.authorization.bin,
-          bank: event.data.authorization.bank,
-        };
+      if (!claimed) {
+        console.log(
+          `Webhook: ${reference} already claimed by another webhook`
+        );
+        return;
       }
-
-      if (event.data.customer) {
-        order.paystackCustomer = {
-          email: event.data.customer.email,
-          customer_code: event.data.customer.customer_code,
-        };
-      }
-
-      // Optional: store the entire Paystack payload for audit.
-      order.paystackRawData = event.data;
-
-      await order.save();
 
       console.log(`✅ Webhook: order ${reference} marked paid`);
       console.log(`   Paystack ID: ${event.data.id}`);
@@ -371,19 +406,35 @@ module.exports.paystackWebhook = async (req, res) => {
       );
 
       // =================================================
+      // REDUCE STOCK FOR EACH ITEM PURCHASED
+      // =================================================
+      // Runs exactly once per order (guarded by the
+      // atomic claim above).
+      //
+      await reduceStockForOrder(claimed);
+
+      // =================================================
       // CLEAR THE USER'S CART
       // =================================================
       await Cart.findOneAndUpdate(
-        { userId: order.userId },
+        { userId: claimed.userId },
         { $set: { items: [] } }
       );
 
       // =================================================
-      // REAL-TIME CART UPDATE VIA SOCKET
+      // REAL-TIME UPDATES
       // =================================================
       req.io
-        ?.to(String(order.userId))
+        ?.to(String(claimed.userId))
+        .emit("orders:updated", { orderId: claimed._id });
+
+      req.io
+        ?.to(String(claimed.userId))
         .emit("cart:updated", { items: [] });
+
+      // Notify every connected client that the catalog
+      // may have changed, so stock counters update live.
+      req.io?.emit("components:refreshed");
 
       return;
     }
@@ -395,17 +446,26 @@ module.exports.paystackWebhook = async (req, res) => {
       const { reference } = event.data;
       if (!reference) return;
 
-      await PaymentOrder.findOneAndUpdate(
-        { reference },
-        { $set: { paymentStatus: "failed" } }
+      // Only mark failed if it's still pending — don't
+      // overwrite a paid order with a failed status.
+      const result = await PaymentOrder.findOneAndUpdate(
+        { reference, paymentStatus: "pending" },
+        { $set: { paymentStatus: "failed" } },
+        { new: true }
       );
 
-      console.log(`❌ Webhook: order ${reference} marked failed`);
+      if (result) {
+        console.log(`❌ Webhook: order ${reference} marked failed`);
+      } else {
+        console.log(
+          `Webhook: ${reference} was not pending — skipping failed mark`
+        );
+      }
       return;
     }
 
     // =================================================
-    // OTHER EVENTS — log and ignore
+    // OTHER EVENTS
     // =================================================
     console.log(`ℹ️ Webhook: unhandled event "${event.event}"`);
   } catch (error) {
@@ -416,3 +476,83 @@ module.exports.paystackWebhook = async (req, res) => {
     // We already sent 200, so nothing more to do.
   }
 };
+
+// =====================================================
+// REDUCE STOCK FOR A PAID ORDER
+// =====================================================
+//
+// For each item, atomically decrement the component's
+// stock. Uses $inc so concurrent orders can't produce
+// lost updates. Uses a $gte guard so stock never goes
+// negative — if it would, the update no-ops and we log
+// the anomaly for reconciliation.
+//
+// =====================================================
+// REDUCE STOCK FOR A PAID ORDER
+// =====================================================
+async function reduceStockForOrder(order, io) {
+  const items = Array.isArray(order.items) ? order.items : [];
+
+  for (const item of items) {
+    const componentId = item.componentId;
+    const qty = Number(item.quantity) || 0;
+    if (!componentId || qty <= 0) continue;
+
+    try {
+      const updated = await Component.findOneAndUpdate(
+        {
+          _id: componentId,
+          stock: { $gte: qty },
+        },
+        {
+          $inc: {
+            stock: -qty,
+            soldCount: qty,   // ← accumulate purchases
+          },
+        },
+        { new: true }
+      ).lean();
+
+      if (!updated) {
+        const comp = await Component.findById(componentId)
+          .select("name stock")
+          .lean();
+
+        if (!comp) {
+          console.warn(
+            `⚠️ Stock not reduced — component ${componentId} not found`
+          );
+        } else {
+          console.warn(
+            `⚠️ Insufficient stock for ${comp.name}: ` +
+              `wanted ${qty}, have ${comp.stock}`
+          );
+        }
+        continue;
+      }
+
+      console.log(
+        `📦 Stock reduced: ${item.name} × ${qty} → ${updated.stock} left, ${updated.soldCount} sold`
+      );
+
+      // Notify every connected client to update this card.
+      io?.emit("component:updated", {
+        _id: String(updated._id),
+        sku: updated.sku,
+        name: updated.name,
+        category: updated.category,
+        price: updated.price,
+        stock: updated.stock,
+        soldCount: updated.soldCount, // ← include it so admin page updates
+        description: updated.description,
+        details: updated.details,
+        image: updated.image,
+      });
+    } catch (err) {
+      console.error(
+        `Failed to reduce stock for ${item.name}:`,
+        err.message
+      );
+    }
+  }
+}

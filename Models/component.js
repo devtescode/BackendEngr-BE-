@@ -39,6 +39,8 @@ const componentSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    // Models/component.js
+    soldCount: { type: Number, default: 0, index: true },
 
     description: {
       type: String,
