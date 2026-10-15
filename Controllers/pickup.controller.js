@@ -204,12 +204,50 @@ module.exports.updatePickupStatus = async (req, res) => {
       return res.status(404).json({ message: "Order not found." });
     }
 
+    // Don't overwrite a collected order with an earlier
+    // status — collected is terminal.
+    if (order.pickupStatus === "Collected" && status !== "Collected") {
+      return res.status(400).json({
+        message: "This order is already collected and cannot be reverted.",
+      });
+    }
+
     order.pickupStatus = status;
+
+    // =================================================
+    // STAMP collectedAt
+    // =================================================
+    // Set the timestamp the first time the order is
+    // marked collected. Don't overwrite an existing
+    // value if the same status is applied again.
+    //
+    if (status === "Collected" && !order.collectedAt) {
+      order.collectedAt = new Date();
+    }
+
     await order.save();
+
+    // =================================================
+    // NOTIFY THE STUDENT IN REAL-TIME
+    // =================================================
+    // The student's /orders page listens for this and
+    // silently refetches, so their card updates the
+    // moment the admin marks it collected.
+    //
+    if (req.io) {
+      req.io
+        .to(String(order.userId))
+        .emit("orders:updated", { orderId: order._id });
+
+      console.log(
+        `📡 Emitted orders:updated to user ${order.userId}`
+      );
+    }
 
     return res.status(200).json({
       message: "Status updated",
       pickupStatus: order.pickupStatus,
+      collectedAt: order.collectedAt || null,
     });
   } catch (error) {
     console.error(
@@ -221,7 +259,6 @@ module.exports.updatePickupStatus = async (req, res) => {
     });
   }
 };
-
 // =====================================================
 // HELPERS
 // =====================================================
