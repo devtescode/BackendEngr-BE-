@@ -104,6 +104,12 @@ io.on("connection", (socket) => {
       return;
     }
 
+    // If the socket is already in this room, don't log
+    // again — just silently accept the (idempotent) join.
+    if (socket.rooms.has(userId)) {
+      return;
+    }
+
     socket.join(userId);
     console.log(`👤 User ${userId} joined socket room`);
   });

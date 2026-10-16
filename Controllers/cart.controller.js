@@ -387,8 +387,6 @@ module.exports.removeFromCart = async (
 
 module.exports.getCart = async (req, res) => {
   try {
-    console.log("🛒 GET CART REQUEST");
-    console.log("USER:", req.user);
 
     const userId = req.user.id;
 
