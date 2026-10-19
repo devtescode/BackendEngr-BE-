@@ -6,6 +6,7 @@ const {
   registerAdmin,
   loginAdmin,
   getAllUsers,
+  overview
 } = require("../Controllers/admin.controllers");
 
 const {
@@ -75,6 +76,9 @@ router.get(
   verifyAdminToken,
   getCollectedOrders
 );
+
+
+router.get("/overview", verifyAdminToken, overview);
 
 
 module.exports = router;

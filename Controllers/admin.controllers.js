@@ -1,9 +1,9 @@
 const Admin = require("../Models/admin.model");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-
+const Order = require("../Models/paymentOrder");
+const Component = require("../Models/component");
 const User = require("../Models/user.models");
-// const Order = require("../Models/models/order.model");
 
 // =========================
 // CHECK IF ADMIN EXISTS
@@ -134,5 +134,73 @@ module.exports.getAllUsers = async (req, res) => {
       message: "Failed to get users",
       error: error.message,
     });
+  }
+};
+
+
+
+
+
+// ---------- OVERVIEW ----------
+
+
+// ---------- OVERVIEW ----------
+module.exports.overview = async (req, res) => {
+  try {
+    const [orders, components, userCount] = await Promise.all([
+      PaymentOrder.find().sort({ createdAt: -1 }).lean(),
+      Component.find().sort({ name: 1 }).lean(),
+      User.countDocuments({ role: "student" }),
+    ]);
+
+    const normalize = (doc) => {
+      if (!doc) return null;
+      const { _id, __v, ...rest } = doc;
+      return { id: String(_id), ...rest };
+    };
+
+    const normalizedOrders = orders.map((o) => {
+      const order = normalize(o);
+
+      // userId is a Mongo ObjectId — expose it as a string
+      if (order.userId && order.userId._id) {
+        order.userId = String(order.userId._id);
+      } else if (order.userId) {
+        order.userId = String(order.userId);
+      }
+
+      // amount is stored in KOBO — expose naira for display
+      const kobo = Number(o.amount ?? 0);
+      order.amountKobo = kobo;
+      order.amountNaira = kobo / 100;
+
+      // items: normalize componentId inside each line
+      order.items = Array.isArray(o.items)
+        ? o.items.map((it) => ({
+            ...it,
+            componentId:
+              it.componentId && it.componentId._id
+                ? String(it.componentId._id)
+                : it.componentId
+                ? String(it.componentId)
+                : null,
+            price: Number(it.price ?? 0),
+            quantity: Number(it.quantity ?? 0),
+          }))
+        : [];
+
+      return order;
+    });
+
+    res.json({
+      orders: normalizedOrders,
+      components: components.map((c) =>
+        normalize({ ...c, stock: Number(c.stock ?? 0) })
+      ),
+      userCount,
+    });
+  } catch (err) {
+    console.error("admin/overview:", err);
+    res.status(500).json({ message: "Failed to load overview." });
   }
 };
