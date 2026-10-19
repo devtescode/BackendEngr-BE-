@@ -1,5 +1,5 @@
 const express = require("express")
-const { usersignup, userlogin } = require("../Controllers/user.controllers")
+const { usersignup, userlogin, changepassword } = require("../Controllers/user.controllers")
 const { addToCart, updateCartQuantity, removeFromCart, getCart } = require("../Controllers/cart.controller")
 const { getMyOrders, getOrderById } = require("../Controllers/getmyorders")
 const { getuserOrdersdb, getCartuserdb} = require("../Controllers/getorderuserdb")
@@ -35,6 +35,8 @@ router.get("/orders/:id", verifyToken, getOrderById);
 
 router.get("/userordersdb", verifyToken, getuserOrdersdb);
 router.get("/cartuserdb", verifyToken, getCartuserdb);
+
+router.post("/changepassword", verifyToken, changepassword);
 
 
 
