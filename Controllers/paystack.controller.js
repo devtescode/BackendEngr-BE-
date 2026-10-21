@@ -411,7 +411,9 @@ module.exports.paystackWebhook = async (req, res) => {
       // Runs exactly once per order (guarded by the
       // atomic claim above).
       //
-      await reduceStockForOrder(claimed);
+      // The socket server is passed through so every stock change is
+      // broadcast to the clients that are showing the affected component.
+      await reduceStockForOrder(claimed, req.io);
 
       // =================================================
       // CLEAR THE USER'S CART

@@ -62,4 +62,16 @@ const componentSchema = new mongoose.Schema(
   }
 );
 
+// Supports the public listing's default createdAt-desc order with
+// the deterministic _id tie-breaker and its paginated range scans.
+componentSchema.index({ createdAt: -1, _id: -1 });
+
+// The components page sorts by updatedAt-desc with the same tie-breaker.
+componentSchema.index({ updatedAt: -1, _id: -1 });
+
+// The category chips filter the listing before it is sorted and paged, so
+// the filter field leads the compound index for both sort orders.
+componentSchema.index({ category: 1, createdAt: -1 });
+componentSchema.index({ category: 1, updatedAt: -1 });
+
 module.exports = mongoose.model("Component", componentSchema);

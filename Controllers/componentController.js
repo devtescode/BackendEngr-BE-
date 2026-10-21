@@ -5,6 +5,156 @@ const mongoose = require("mongoose");
 
 
 // ======================================================
+// PAGINATED COMPONENTS (PUBLIC) HELPERS
+// ======================================================
+
+const COMPONENT_CARD_FIELDS = [
+  "_id",
+  "sku",
+  "name",
+  "category",
+  "price",
+  "soldCount",
+  "stock",
+  "description",
+  "details",
+  "image",
+  "createdAt",
+  "updatedAt",
+];
+
+const COMPONENT_CARD_PROJECTION = COMPONENT_CARD_FIELDS.reduce(
+  (projection, field) => {
+    projection[field] = 1;
+    return projection;
+  },
+  {}
+);
+
+const ALLOWED_COMPONENT_SORTS = new Set([
+  "createdAt",
+  "updatedAt",
+  "price",
+  "stock",
+  "soldCount",
+  "name",
+  "sku",
+]);
+
+// Keep the category filter aligned with the schema enum rather
+// than duplicating the list in the controller.
+const componentCategoryPath = Component.schema?.path?.("category");
+const ALLOWED_COMPONENT_CATEGORIES = new Set(
+  Array.isArray(componentCategoryPath?.enumValues)
+    ? componentCategoryPath.enumValues.filter(
+        (value) => typeof value === "string"
+      )
+    : []
+);
+
+const DEFAULT_PAGE = 1;
+const DEFAULT_LIMIT = 6;
+const MIN_LIMIT = 1;
+const MAX_LIMIT = 48;
+const MAX_SEARCH_LENGTH = 100;
+const UPDATED_AT_SORT_FIELD = "__sortUpdatedAt";
+
+function getScalarQueryValue(value) {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    return value;
+  }
+
+  return undefined;
+}
+
+function parseIntegerParam(value, fallback) {
+  const raw = getScalarQueryValue(value);
+
+  if (raw === undefined || raw === null || raw === "") {
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
+}
+
+function sanitizePage(value) {
+  const page = parseIntegerParam(value, DEFAULT_PAGE);
+
+  return page >= 1 ? page : DEFAULT_PAGE;
+}
+
+function sanitizeLimit(value) {
+  const limit = parseIntegerParam(value, DEFAULT_LIMIT);
+
+  return Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, limit));
+}
+
+function sanitizeSort(value) {
+  const raw = getScalarQueryValue(value);
+  const sort = typeof raw === "string" ? raw.trim() : "";
+
+  return ALLOWED_COMPONENT_SORTS.has(sort) ? sort : "createdAt";
+}
+
+function sanitizeOrder(value) {
+  const raw = getScalarQueryValue(value);
+  const order = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+
+  return order === "asc" || order === "desc" ? order : "desc";
+}
+
+function sanitizeSearch(value) {
+  const raw = getScalarQueryValue(value);
+
+  if (typeof raw !== "string") {
+    return "";
+  }
+
+  return raw.trim().slice(0, MAX_SEARCH_LENGTH);
+}
+
+function sanitizeCategory(value) {
+  const raw = getScalarQueryValue(value);
+  const category = typeof raw === "string" ? raw.trim() : "";
+
+  return ALLOWED_COMPONENT_CATEGORIES.has(category) ? category : "";
+}
+
+function escapeRegExp(value) {
+  // Escape every regex metacharacter so user input is treated as
+  // a literal. Combined with the 100-character cap, this prevents
+  // regex injection and ReDoS-style patterns.
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildComponentFilter(search, category) {
+  const filter = {};
+
+  if (category) {
+    filter.category = category;
+  }
+
+  if (search) {
+    const searchExpression = new RegExp(escapeRegExp(search), "i");
+
+    filter.$or = [
+      { name: searchExpression },
+      { sku: searchExpression },
+      { description: searchExpression },
+    ];
+  }
+
+  return filter;
+}
+
+
+// ======================================================
 // GET ALL COMPONENTS
 // GET /admin/components
 // ======================================================
@@ -27,6 +177,92 @@ module.exports.getComponents = async (req, res) => {
     return res.status(500).json({
       message: "Failed to fetch components",
       error: error.message,
+    });
+  }
+};
+
+// ======================================================
+// GET PAGINATED COMPONENTS
+// GET /engineering/components
+// ======================================================
+
+module.exports.getPaginatedComponents = async (req, res) => {
+  try {
+    const requestedPage = sanitizePage(req.query.page);
+    const limit = sanitizeLimit(req.query.limit);
+    const sort = sanitizeSort(req.query.sort);
+    const order = sanitizeOrder(req.query.order);
+    const search = sanitizeSearch(req.query.search);
+    const category = sanitizeCategory(req.query.category);
+
+    // Build the complete filter before counting so the total and
+    // the page always describe the same result set.
+    const filter = buildComponentFilter(search, category);
+
+    const totalItems = await Component.countDocuments(filter);
+    const totalPages =
+      totalItems === 0 ? 0 : Math.ceil(totalItems / limit);
+    const currentPage =
+      totalItems === 0
+        ? 1
+        : Math.min(requestedPage, totalPages);
+    const skip = (currentPage - 1) * limit;
+    const direction = order === "asc" ? 1 : -1;
+
+    let components;
+
+    if (sort === "updatedAt") {
+      // Legacy records may not have updatedAt. Sort on a computed
+      // fallback so those records still participate predictably.
+      components = await Component.aggregate([
+        { $match: filter },
+        {
+          $addFields: {
+            [UPDATED_AT_SORT_FIELD]: {
+              $ifNull: ["$updatedAt", "$createdAt"],
+            },
+          },
+        },
+        {
+          $sort: {
+            [UPDATED_AT_SORT_FIELD]: direction,
+            _id: direction,
+          },
+        },
+        { $skip: skip },
+        { $limit: limit },
+        { $project: COMPONENT_CARD_PROJECTION },
+      ]);
+    } else {
+      components = await Component.find(filter)
+        .select(COMPONENT_CARD_FIELDS.join(" "))
+        .sort({
+          [sort]: direction,
+          _id: direction,
+        })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: components,
+      pagination: {
+        currentPage,
+        pageSize: limit,
+        totalItems,
+        totalPages,
+        hasNextPage: currentPage < totalPages,
+        hasPreviousPage: currentPage > 1,
+      },
+    });
+  } catch (error) {
+    console.error("Get paginated components error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch components",
     });
   }
 };
