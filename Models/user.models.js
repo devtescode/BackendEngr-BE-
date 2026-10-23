@@ -44,6 +44,24 @@ const Userschema = new mongoose.Schema(
       type: String,
       default: "student",
     },
+
+    // Password reset — only the SHA-256 hash of the token is stored.
+    passwordResetToken: {
+      type: String,
+      select: false,
+      index: true,
+    },
+
+    passwordResetExpires: {
+      type: Date,
+      select: false,
+    },
+
+    // Set when a password is reset; JWTs issued before this are rejected.
+    passwordChangedAt: {
+      type: Date,
+      select: false,
+    },
   },
   {timestamps: true}
 );
@@ -58,6 +76,9 @@ Userschema.pre("save", async function () {
 Userschema.methods.toJSON = function () {
   const user = this.toObject();
   delete user.password;
+  delete user.passwordResetToken;
+  delete user.passwordResetExpires;
+  delete user.passwordChangedAt;
   return user;
 };
 

@@ -13,6 +13,9 @@ const { paystackWebhook } = require("./Controllers/paystack.controller");
 const app = express();
 const server = http.createServer(app);
 
+// Behind Render's proxy: lets rate limiting see the real client IP.
+app.set("trust proxy", 1);
+
 // ======================================================
 // SOCKET.IO
 // ======================================================

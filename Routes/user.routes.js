@@ -1,5 +1,13 @@
 const express = require("express")
-const { usersignup, userlogin, changepassword } = require("../Controllers/user.controllers")
+const {
+    usersignup,
+    userlogin,
+    changepassword,
+    forgotpassword,
+    validateresettoken,
+    resetpassword,
+} = require("../Controllers/user.controllers")
+const { forgotPasswordLimiter, resetPasswordLimiter } = require("../middleware/rateLimit")
 const { addToCart, updateCartQuantity, removeFromCart, getCart } = require("../Controllers/cart.controller")
 const { getMyOrders, getOrderById } = require("../Controllers/getmyorders")
 const { getuserOrdersdb, getCartuserdb} = require("../Controllers/getorderuserdb")
@@ -11,6 +19,11 @@ const { verifyToken } = require("../middleware/auth");
 
 router.post("/usersignup", usersignup)
 router.post("/userlogin", userlogin)
+
+// Password recovery (public, rate limited).
+router.post("/forgot-password", forgotPasswordLimiter, forgotpassword)
+router.get("/reset-password/:token", resetPasswordLimiter, validateresettoken)
+router.post("/reset-password/:token", resetPasswordLimiter, resetpassword)
 
 // Public component listing with server-side pagination.
 router.get("/components", getPaginatedComponents)
