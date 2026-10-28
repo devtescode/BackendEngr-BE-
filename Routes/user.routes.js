@@ -6,8 +6,16 @@ const {
     forgotpassword,
     validateresettoken,
     resetpassword,
+    verifyemail,
+    resendverification,
 } = require("../Controllers/user.controllers")
-const { forgotPasswordLimiter, resetPasswordLimiter } = require("../middleware/rateLimit")
+const {
+    forgotPasswordLimiter,
+    resetPasswordLimiter,
+    signupLimiter,
+    verifyEmailLimiter,
+    resendVerificationLimiter,
+} = require("../middleware/rateLimit")
 const { addToCart, updateCartQuantity, removeFromCart, getCart } = require("../Controllers/cart.controller")
 const { getMyOrders, getOrderById } = require("../Controllers/getmyorders")
 const { getuserOrdersdb, getCartuserdb} = require("../Controllers/getorderuserdb")
@@ -17,8 +25,12 @@ const router = express.Router()
 // const upload = require("../middleware/upload");
 const { verifyToken } = require("../middleware/auth");
 
-router.post("/usersignup", usersignup)
+router.post("/usersignup", signupLimiter, usersignup)
 router.post("/userlogin", userlogin)
+
+// Email verification (public, rate limited). POST so link scanners can't consume tokens.
+router.post("/verify-email/:token", verifyEmailLimiter, verifyemail)
+router.post("/resend-verification", resendVerificationLimiter, resendverification)
 
 // Password recovery (public, rate limited).
 router.post("/forgot-password", forgotPasswordLimiter, forgotpassword)

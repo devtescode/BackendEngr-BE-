@@ -30,6 +30,7 @@ export const verifyToken = async (req, res, next) => {
 
     try {
       user = await User.findById(decoded.id)
+        // isEmailVerified is selected by default; passwordChangedAt is hidden.
         .select("+passwordChangedAt")
         .lean();
     } catch (err) {
@@ -38,13 +39,29 @@ export const verifyToken = async (req, res, next) => {
       });
     }
 
-    const currentVersion = user?.passwordChangedAt
+    // Account deleted since the token was issued.
+    if (!user) {
+      return res.status(401).json({
+        message: "Invalid or expired token",
+      });
+    }
+
+    const currentVersion = user.passwordChangedAt
       ? new Date(user.passwordChangedAt).getTime()
       : 0;
 
     if ((decoded.pwdv || 0) !== currentVersion) {
       return res.status(401).json({
         message: "Invalid or expired token",
+      });
+    }
+
+    // Unverified (incl. legacy accounts without the field) can't use the API.
+    if (user.isEmailVerified !== true) {
+      return res.status(403).json({
+        success: false,
+        code: "EMAIL_NOT_VERIFIED",
+        message: "Please verify your email address before continuing.",
       });
     }
   }

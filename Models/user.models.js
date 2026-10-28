@@ -63,6 +63,35 @@ const Userschema = new mongoose.Schema(
       type: Date,
       select: false,
     },
+
+    // Email verification. Legacy docs without this field are treated as
+    // unverified (code checks `isEmailVerified !== true`).
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    emailVerifiedAt: {
+      type: Date,
+    },
+
+    // Only the SHA-256 hash of the verification token is stored.
+    emailVerificationToken: {
+      type: String,
+      select: false,
+      index: true,
+    },
+
+    emailVerificationExpires: {
+      type: Date,
+      select: false,
+    },
+
+    // Last successful verification email send (resend cooldown).
+    emailVerificationSentAt: {
+      type: Date,
+      select: false,
+    },
   },
   {timestamps: true}
 );
@@ -80,6 +109,9 @@ Userschema.methods.toJSON = function () {
   delete user.passwordResetToken;
   delete user.passwordResetExpires;
   delete user.passwordChangedAt;
+  delete user.emailVerificationToken;
+  delete user.emailVerificationExpires;
+  delete user.emailVerificationSentAt;
   return user;
 };
 
