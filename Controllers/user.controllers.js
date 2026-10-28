@@ -13,7 +13,17 @@ const PASSWORD_MAX_LENGTH = 128;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const FORGOT_PASSWORD_MESSAGE =
-    "If an account exists for that email, a password reset link has been sent.";
+    "A password reset link has been sent to your email.";
+
+const normalizeEmail = (value) =>
+    typeof value === "string" ? value.trim().toLowerCase() : "";
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Case-insensitive and whitespace-tolerant, so accounts saved before
+// emails were normalised (mixed case, stray spaces) still match.
+const findUserByEmail = (email) =>
+    User.findOne({ email: { $regex: `^\\s*${escapeRegex(email)}\\s*$`, $options: "i" } });
 
 const hashResetToken = (token) =>
     crypto.createHash("sha256").update(token).digest("hex");
@@ -78,9 +88,9 @@ module.exports.userwelcome = async (req, res) => {
 
 module.exports.usersignup = async (req, res) => {
     try {
+        const email = normalizeEmail(req.body.email);
         const {
             fullName,
-            email,
             matric,
             gender,
             phoneNumber,
@@ -126,7 +136,8 @@ module.exports.usersignup = async (req, res) => {
 
 module.exports.userlogin = async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { password } = req.body;
+        const email = normalizeEmail(req.body.email);
 
         // 1. validate input
         if (!email || !password) {
@@ -136,7 +147,7 @@ module.exports.userlogin = async (req, res) => {
         }
 
         // 2. find user
-        const user = await User.findOne({ email }).select("+passwordChangedAt");
+        const user = await findUserByEmail(email).select("+passwordChangedAt");
         if (!user) {
             return res.status(404).json({
                 message: "User not found",
@@ -239,9 +250,7 @@ module.exports.changepassword = async (req, res) => {
     }
 }
 module.exports.forgotpassword = async (req, res) => {
-    const email = typeof req.body?.email === "string"
-        ? req.body.email.trim().toLowerCase()
-        : "";
+    const email = normalizeEmail(req.body?.email);
 
     if (!email || email.length > 254 || !EMAIL_PATTERN.test(email)) {
         return res.status(400).json({
@@ -250,8 +259,25 @@ module.exports.forgotpassword = async (req, res) => {
         });
     }
 
-    // Checked before the user lookup so the response is the same
-    // for every address when email delivery is unavailable.
+    let user;
+
+    try {
+        user = await findUserByEmail(email);
+    } catch (error) {
+        console.error("Forgot password lookup failed:", { name: error.name, code: error.code });
+        return res.status(500).json({
+            success: false,
+            message: "Server error. Please try again.",
+        });
+    }
+
+    if (!user) {
+        return res.status(404).json({
+            success: false,
+            message: "No account found with that email address.",
+        });
+    }
+
     if (!isEmailConfigured() || !process.env.FRONTEND_URL) {
         console.error("Forgot password: email provider (EMAIL_PROVIDER + its credentials) or FRONTEND_URL is not set");
         return res.status(503).json({
@@ -260,17 +286,7 @@ module.exports.forgotpassword = async (req, res) => {
         });
     }
 
-    let user;
-
     try {
-        user = await User.findOne({ email });
-
-        if (!user) {
-            return res.status(200).json({
-                success: true,
-                message: FORGOT_PASSWORD_MESSAGE,
-            });
-        }
 
         const token = crypto.randomBytes(32).toString("hex");
 
@@ -312,12 +328,10 @@ module.exports.forgotpassword = async (req, res) => {
         });
 
         // The link was never delivered, so don't leave a live token behind.
-        if (user) {
-            await User.updateOne(
-                { _id: user._id },
-                { $unset: { passwordResetToken: 1, passwordResetExpires: 1 } }
-            ).catch(() => { });
-        }
+        await User.updateOne(
+            { _id: user._id },
+            { $unset: { passwordResetToken: 1, passwordResetExpires: 1 } }
+        ).catch(() => { });
 
         return res.status(503).json({
             success: false,

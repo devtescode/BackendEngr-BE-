@@ -14,6 +14,7 @@ const Userschema = new mongoose.Schema(
       required: true,
       unique: true,
       lowercase: true,
+      trim: true,
     },
 
     matric: {
