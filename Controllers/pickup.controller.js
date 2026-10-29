@@ -117,7 +117,7 @@ module.exports.searchOrders = async (req, res) => {
     })
       .sort({ paystackPaidAt: -1, paidAt: -1, createdAt: -1 })
       .populate("items.componentId", "image sku name")
-      .populate("userId", "fullName matric email")
+      .populate("userId", "fullName matric email profileImageUrl")
       .lean();
 
     // =================================================
@@ -134,6 +134,11 @@ module.exports.searchOrders = async (req, res) => {
         userName: user?.fullName || "Unknown",
         matric: user?.matric || "",
         email: user?.email || null,
+        userImage:
+          typeof user?.profileImageUrl === "string" &&
+          user.profileImageUrl.startsWith("https://")
+            ? user.profileImageUrl
+            : null,
         items: Array.isArray(o.items)
           ? o.items.map((it) => {
               const populated =
@@ -269,21 +274,205 @@ function escapeRegex(s) {
 
 
 // =====================================================
+// COLLECTED ORDERS: QUERY SANITIZERS
+// =====================================================
+// Mirrors the style of getPaginatedComponents in
+// componentController.js. Invalid input falls back to
+// the default instead of erroring.
+//
+const COLLECTED_DEFAULT_PAGE = 1;
+const COLLECTED_DEFAULT_LIMIT = 4;
+const COLLECTED_MIN_LIMIT = 1;
+const COLLECTED_MAX_LIMIT = 50;
+const COLLECTED_MAX_SEARCH_LENGTH = 100;
+const COLLECTED_MAX_USER_MATCHES = 500;
+
+const COLLECTED_SORTS = {
+  recent: { collectedAt: -1, paystackPaidAt: -1, createdAt: -1, _id: -1 },
+  oldest: { collectedAt: 1, paystackPaidAt: 1, createdAt: 1, _id: 1 },
+  highest: { amount: -1, collectedAt: -1, _id: -1 },
+};
+
+function getCollectedScalar(value) {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    return value;
+  }
+
+  return undefined;
+}
+
+function parseCollectedInteger(value, fallback) {
+  const raw = getCollectedScalar(value);
+
+  if (raw === undefined || raw === null || raw === "") {
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
+}
+
+function sanitizeCollectedPage(value) {
+  const page = parseCollectedInteger(value, COLLECTED_DEFAULT_PAGE);
+
+  return page >= 1 ? page : COLLECTED_DEFAULT_PAGE;
+}
+
+function sanitizeCollectedLimit(value) {
+  const limit = parseCollectedInteger(value, COLLECTED_DEFAULT_LIMIT);
+
+  return Math.min(COLLECTED_MAX_LIMIT, Math.max(COLLECTED_MIN_LIMIT, limit));
+}
+
+function sanitizeCollectedSearch(value) {
+  const raw = getCollectedScalar(value);
+
+  if (typeof raw !== "string") {
+    return "";
+  }
+
+  return raw.trim().slice(0, COLLECTED_MAX_SEARCH_LENGTH);
+}
+
+function sanitizeCollectedSort(value) {
+  const raw = getCollectedScalar(value);
+  const sort = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+
+  return Object.prototype.hasOwnProperty.call(COLLECTED_SORTS, sort)
+    ? sort
+    : "recent";
+}
+
+function escapeCollectedRegExp(value) {
+  // Treat user input as a literal; with the 100-char cap this
+  // prevents regex injection / ReDoS-style patterns.
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function safeProfileImageUrl(value) {
+  return typeof value === "string" && value.startsWith("https://")
+    ? value
+    : null;
+}
+
+async function buildCollectedFilter(search) {
+  const filter = {
+    paymentStatus: "paid",
+    pickupStatus: "Collected",
+  };
+
+  if (!search) {
+    return filter;
+  }
+
+  const expression = new RegExp(escapeCollectedRegExp(search), "i");
+
+  const matchedUsers = await User.find({
+    $or: [
+      { fullName: expression },
+      { matric: expression },
+      { email: expression },
+    ],
+  })
+    .select("_id")
+    .limit(COLLECTED_MAX_USER_MATCHES)
+    .lean();
+
+  filter.$or = [
+    { reference: expression },
+    { "items.name": expression },
+    { userId: { $in: matchedUsers.map((u) => u._id) } },
+  ];
+
+  return filter;
+}
+
+async function getCollectedStats(filter) {
+  const [row] = await PaymentOrder.aggregate([
+    { $match: filter },
+    {
+      $group: {
+        _id: null,
+        orders: { $sum: 1 },
+        students: { $addToSet: "$userId" },
+        items: {
+          $sum: {
+            $reduce: {
+              input: { $ifNull: ["$items", []] },
+              initialValue: 0,
+              in: {
+                $add: [
+                  "$$value",
+                  { $ifNull: ["$$this.quantity", 0] },
+                ],
+              },
+            },
+          },
+        },
+        amount: { $sum: { $ifNull: ["$amount", 0] } },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        orders: 1,
+        students: { $size: "$students" },
+        items: 1,
+        amount: 1,
+      },
+    },
+  ]);
+
+  return {
+    orders: Number(row?.orders) || 0,
+    students: Number(row?.students) || 0,
+    items: Number(row?.items) || 0,
+    value: (Number(row?.amount) || 0) / 100,
+  };
+}
+
+// =====================================================
 // GET ALL COLLECTED ORDERS
 // =====================================================
+// GET /admin/pickup/collected?page&limit&q&sort
+//
 module.exports.getCollectedOrders = async (req, res) => {
   if (!requireAdmin(req, res)) return;
 
   try {
-    const orders = await PaymentOrder.find({
-      paymentStatus: "paid",
-      pickupStatus: "Collected",
-    })
-      .sort({ collectedAt: -1, paystackPaidAt: -1, createdAt: -1 })
-      .populate("items.componentId", "image sku name")
-      .populate("userId", "fullName matric email")
-      .limit(500)
-      .lean();
+    const requestedPage = sanitizeCollectedPage(req.query.page);
+    const limit = sanitizeCollectedLimit(req.query.limit);
+    const search = sanitizeCollectedSearch(req.query.q);
+    const sort = sanitizeCollectedSort(req.query.sort);
+
+    // Build the filter once so the page, total and stats
+    // all describe the same result set.
+    const filter = await buildCollectedFilter(search);
+
+    const [totalItems, stats] = await Promise.all([
+      PaymentOrder.countDocuments(filter),
+      getCollectedStats(filter),
+    ]);
+
+    const totalPages = totalItems === 0 ? 0 : Math.ceil(totalItems / limit);
+    const page = totalItems === 0 ? 1 : Math.min(requestedPage, totalPages);
+    const skip = (page - 1) * limit;
+
+    const orders =
+      totalItems === 0
+        ? []
+        : await PaymentOrder.find(filter)
+            .sort(COLLECTED_SORTS[sort])
+            .skip(skip)
+            .limit(limit)
+            .populate("items.componentId", "image sku name")
+            .populate("userId", "fullName matric email profileImageUrl")
+            .lean();
 
     const shaped = orders.map((o) => {
       const user =
@@ -296,6 +485,7 @@ module.exports.getCollectedOrders = async (req, res) => {
         userName: user?.fullName || "Unknown",
         matric: user?.matric || "",
         email: user?.email || null,
+        userImage: safeProfileImageUrl(user?.profileImageUrl),
         items: Array.isArray(o.items)
           ? o.items.map((it) => {
               const populated =
@@ -323,13 +513,19 @@ module.exports.getCollectedOrders = async (req, res) => {
         collectedAt: o.collectedAt || null,
         status: "Collected",
       };
-      
     });
 
     return res.status(200).json({
       message: "Collected orders fetched",
-      count: shaped.length,
       orders: shaped,
+      count: shaped.length,
+      pagination: {
+        page,
+        limit,
+        totalItems,
+        totalPages,
+      },
+      stats,
     });
   } catch (error) {
     console.error(

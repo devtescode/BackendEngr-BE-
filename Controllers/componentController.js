@@ -633,7 +633,7 @@ module.exports.getAllCarts = async (req, res) => {
     })
       .populate(
         "userId",
-        "fullName email matric"
+        "fullName email matric profileImageUrl"
       )
       .populate(
         "items.componentId",
@@ -641,8 +641,21 @@ module.exports.getAllCarts = async (req, res) => {
       )
       .sort({ updatedAt: -1 });
 
+    // Skip carts of deleted users and items of deleted components;
+    // a cart left with no items is dropped too.
+    const visibleCarts = carts
+      .filter((cart) => cart.userId)
+      .map((cart) => {
+        const json = cart.toJSON();
+        json.items = (json.items || []).filter(
+          (item) => item.componentId
+        );
+        return json;
+      })
+      .filter((cart) => cart.items.length > 0);
+
     return res.status(200).json({
-      carts,
+      carts: visibleCarts,
     });
   } catch (error) {
     console.error(

@@ -46,6 +46,17 @@ const Userschema = new mongoose.Schema(
       default: "student",
     },
 
+    // Profile picture (Cloudinary). The public ID is only used server-side
+    // to delete the previous asset and is never sent to clients.
+    profileImageUrl: {
+      type: String,
+    },
+
+    profileImagePublicId: {
+      type: String,
+      select: false,
+    },
+
     // Password reset — only the SHA-256 hash of the token is stored.
     passwordResetToken: {
       type: String,
@@ -112,6 +123,7 @@ Userschema.methods.toJSON = function () {
   delete user.emailVerificationToken;
   delete user.emailVerificationExpires;
   delete user.emailVerificationSentAt;
+  delete user.profileImagePublicId;
   return user;
 };
 

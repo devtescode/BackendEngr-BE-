@@ -8,6 +8,8 @@ const {
     resetpassword,
     verifyemail,
     resendverification,
+    getprofile,
+    uploadprofileimage,
 } = require("../Controllers/user.controllers")
 const {
     forgotPasswordLimiter,
@@ -15,7 +17,9 @@ const {
     signupLimiter,
     verifyEmailLimiter,
     resendVerificationLimiter,
+    profileImageLimiter,
 } = require("../middleware/rateLimit")
+const profileImageUpload = require("../middleware/profileImageUpload")
 const { addToCart, updateCartQuantity, removeFromCart, getCart } = require("../Controllers/cart.controller")
 const { getMyOrders, getOrderById } = require("../Controllers/getmyorders")
 const { getuserOrdersdb, getCartuserdb} = require("../Controllers/getorderuserdb")
@@ -67,6 +71,10 @@ router.get("/userordersdb", verifyToken, getuserOrdersdb);
 router.get("/cartuserdb", verifyToken, getCartuserdb);
 
 router.post("/changepassword", verifyToken, changepassword);
+
+// Profile + profile picture (multipart field "image", JPEG/PNG/WebP, max 5 MB).
+router.get("/profile", verifyToken, getprofile);
+router.post("/profile-image", verifyToken, profileImageLimiter, profileImageUpload, uploadprofileimage);
 
 
 

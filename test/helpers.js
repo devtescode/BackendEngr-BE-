@@ -5,6 +5,7 @@
 process.env.NODE_ENV = "test";
 process.env.JWT_SECRET = "test-jwt-secret";
 process.env.FRONTEND_URL = "http://localhost:5173";
+process.env.ADMIN_JWT_SECRET = "test-admin-jwt-secret";
 
 const path = require("path");
 const crypto = require("crypto");
@@ -52,6 +53,108 @@ stubModule.exports = { sendEmail, isEmailConfigured };
 require.cache[emailPath] = stubModule;
 
 // ---------------------------------------------------------------------------
+// Cloudinary stub — replaces config/cloudinary.js in require.cache BEFORE any
+// route/controller/util loads it, so no test can ever reach real Cloudinary.
+// Records every upload_stream/destroy call (in order) and can be toggled to
+// fail. Optional async hooks (onUpload/onDestroy) run at call time; their
+// results are stored on the event so tests can snapshot DB state "when" the
+// call happened. Await cloudinaryStub.settle() before inspecting hook results.
+// ---------------------------------------------------------------------------
+const cloudinaryStub = {
+  events: [], // { type: "upload"|"destroy", ... } in call order
+  uploadMode: "ok", // "ok" | "fail"
+  destroyMode: "ok", // "ok" | "fail"
+  onUpload: null,
+  onDestroy: null,
+  pending: [],
+  counter: 0,
+  reset() {
+    this.events.length = 0;
+    this.pending.length = 0;
+    this.uploadMode = "ok";
+    this.destroyMode = "ok";
+    this.onUpload = null;
+    this.onDestroy = null;
+  },
+  uploads() {
+    return this.events.filter((e) => e.type === "upload");
+  },
+  destroys() {
+    return this.events.filter((e) => e.type === "destroy");
+  },
+  async settle() {
+    await Promise.all(this.pending.slice());
+  },
+};
+
+const fakeCloudinary = {
+  config() {},
+  uploader: {
+    upload_stream(options, cb) {
+      if (typeof options === "function") {
+        cb = options;
+        options = {};
+      }
+      return {
+        end(buffer) {
+          const ev = { type: "upload", options, size: buffer ? buffer.length : 0 };
+          cloudinaryStub.events.push(ev);
+          const fail = cloudinaryStub.uploadMode === "fail";
+          let result;
+          if (!fail) {
+            cloudinaryStub.counter += 1;
+            const folder = (options && options.folder) || "root";
+            const public_id = `${folder}/stub-${process.pid}-${cloudinaryStub.counter}`;
+            result = {
+              public_id,
+              secure_url: `https://res.cloudinary.com/stub/image/upload/v1/${public_id}.jpg`,
+            };
+            ev.result = result;
+          }
+          const hook = cloudinaryStub.onUpload
+            ? Promise.resolve(cloudinaryStub.onUpload(ev)).then((r) => { ev.hook = r; })
+            : Promise.resolve();
+          cloudinaryStub.pending.push(hook);
+          hook.then(() => {
+            if (fail) cb(Object.assign(new Error("stubbed cloudinary upload failure"), { http_code: 500 }));
+            else cb(undefined, result);
+          });
+        },
+      };
+    },
+    destroy(publicId, opts, cb) {
+      if (typeof opts === "function") {
+        cb = opts;
+        opts = undefined;
+      }
+      const ev = { type: "destroy", publicId, opts };
+      cloudinaryStub.events.push(ev);
+      const fail = cloudinaryStub.destroyMode === "fail";
+      const hook = cloudinaryStub.onDestroy
+        ? Promise.resolve(cloudinaryStub.onDestroy(ev)).then((r) => { ev.hook = r; })
+        : Promise.resolve();
+      cloudinaryStub.pending.push(hook);
+      const p = hook.then(() => {
+        if (fail) throw Object.assign(new Error("stubbed cloudinary destroy failure"), { http_code: 500 });
+        return { result: "ok" };
+      });
+      if (typeof cb === "function") {
+        p.then((r) => cb(undefined, r), (e) => cb(e));
+        return undefined;
+      }
+      return p;
+    },
+  },
+};
+
+const cloudinaryPath = require.resolve(path.join(__dirname, "..", "config", "cloudinary.js"));
+const cloudinaryModule = new Module(cloudinaryPath, module);
+cloudinaryModule.filename = cloudinaryPath;
+cloudinaryModule.loaded = true;
+cloudinaryModule.exports = fakeCloudinary;
+require.cache[cloudinaryPath] = cloudinaryModule;
+
+// ---------------------------------------------------------------------------
 // App + DB
 // ---------------------------------------------------------------------------
 const express = require("express");
@@ -62,11 +165,32 @@ const { MongoMemoryServer } = require("mongodb-memory-server");
 const userRoutes = require("../Routes/user.routes");
 const User = require("../Models/user.models");
 
-function buildApp() {
+// Options (all optional; default is the original user-routes-only app):
+//   admin: true      also mount Routes/user.adminRoutes.js at /admin
+//   io: {emit()}     attach as req.io (like index.js does with socket.io)
+//   trustProxy: v    app.set("trust proxy", v) so tests can vary req.ip via
+//                    X-Forwarded-For (per-IP rate limiter isolation)
+function buildApp(opts = {}) {
   const app = express();
+  if (opts.trustProxy !== undefined) app.set("trust proxy", opts.trustProxy);
+  if (opts.io) {
+    app.use((req, res, next) => {
+      req.io = opts.io;
+      next();
+    });
+  }
   app.use(express.json());
   app.use("/engineering", userRoutes);
+  if (opts.admin) app.use("/admin", require("../Routes/user.adminRoutes"));
   return app;
+}
+
+function signAdminJwt(overrides = {}) {
+  return jwt.sign(
+    { id: new mongoose.Types.ObjectId().toString(), role: "admin", ...overrides },
+    process.env.ADMIN_JWT_SECRET,
+    { expiresIn: "1h" }
+  );
 }
 
 let mongod;
@@ -85,6 +209,7 @@ async function stopDb() {
 async function clearDb() {
   await User.deleteMany({});
   emailStub.reset();
+  cloudinaryStub.reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +287,8 @@ function signJwtFor(user) {
 
 module.exports = {
   emailStub,
+  cloudinaryStub,
+  signAdminJwt,
   buildApp,
   startDb,
   stopDb,

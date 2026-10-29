@@ -1,4 +1,4 @@
-const { rateLimit } = require("express-rate-limit");
+const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
 
 const tooManyRequests = (message) => (req, res, next, options) =>
   res
@@ -60,10 +60,25 @@ const resendVerificationLimiter = rateLimit({
   ),
 });
 
+// Profile picture upload: limits Cloudinary upload spam per signed-in
+// user (runs after verifyToken), so students sharing campus Wi-Fi
+// don't share one allowance.
+const profileImageLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  keyGenerator: (req) => (req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.ip)),
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: tooManyRequests(
+    "Too many profile picture uploads. Please try again in 15 minutes."
+  ),
+});
+
 module.exports = {
   forgotPasswordLimiter,
   resetPasswordLimiter,
   signupLimiter,
   verifyEmailLimiter,
   resendVerificationLimiter,
+  profileImageLimiter,
 };

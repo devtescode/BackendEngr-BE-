@@ -2,6 +2,24 @@ const mongoose = require("mongoose");
 const Cart = require("../Models/cart");
 const Component = require("../Models/component");
 
+// Sends the cart to the owner's socket room (index.js joins sockets to
+// the plain userId) and tells admins that carts changed. Returns true
+// when a socket server was available.
+const emitCartUpdate = (req, userId, cart) => {
+  const io =
+    req.io ||
+    (req.app && typeof req.app.get === "function"
+      ? req.app.get("io")
+      : undefined);
+
+  if (!io) return false;
+
+  io.to(userId.toString()).emit("cart:updated", cart);
+  io.emit("carts:changed");
+
+  return true;
+};
+
 // ======================================================
 // ADD TO CART / INCREASE QUANTITY
 // POST /engineering/addtocart
@@ -147,12 +165,7 @@ module.exports.addToCart = async (req, res) => {
     // SOCKET.IO REAL-TIME UPDATE
     // ======================================================
 
-    if (req.io) {
-      req.io.to(userId.toString()).emit(
-        "cart:updated",
-        populatedCart
-      );
-
+    if (emitCartUpdate(req, userId, populatedCart)) {
       console.log(
         `🛒 Cart update sent to user ${userId}`
       );
@@ -268,14 +281,7 @@ module.exports.updateCartQuantity = async (
       );
 
     // REAL-TIME UPDATE
-    const io = req.app.get("io");
-
-    if (io) {
-      io.to(`user:${userId}`).emit(
-        "cart:updated",
-        populatedCart
-      );
-    }
+    emitCartUpdate(req, userId, populatedCart);
 
     return res.status(200).json({
       message: "Cart quantity updated",
@@ -356,15 +362,8 @@ module.exports.removeFromCart = async (
         "items.componentId"
       );
 
-    
-    const io = req.app.get("io");
 
-    if (io) {
-      io.to(`user:${userId}`).emit(
-        "cart:updated",
-        populatedCart
-      );
-    }
+    emitCartUpdate(req, userId, populatedCart);
 
     return res.status(200).json({
       message: "Item removed from cart",

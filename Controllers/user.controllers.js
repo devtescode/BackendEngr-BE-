@@ -5,7 +5,11 @@ const bcrypt = require("bcryptjs")
 const crypto = require("crypto")
 const User = require("../Models/user.models");
 const { sendEmail, isEmailConfigured } = require("../utils/email");
+const uploadImage = require("../utils/uploadImage");
+const { deleteImage } = uploadImage;
 env.config()
+
+const PROFILE_IMAGE_FOLDER = "euhardwarestore-profile-images";
 
 const RESET_TOKEN_TTL_MINUTES = 30;
 const PASSWORD_MIN_LENGTH = 8;
@@ -116,7 +120,7 @@ function buildVerificationEmail({ fullName, verifyUrl }) {
     <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#475569;">Hi ${name},</p>
     <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#475569;">
       Thanks for creating an EU Hardwarestore account. Please confirm your email address
-      by clicking the button below — you must verify your email before you can log in.
+      by clicking the button below you must verify your email before you can log in.
       This link expires in ${VERIFICATION_TOKEN_TTL_HOURS} hours.
     </p>
     <a href="${url}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 24px;border-radius:8px;">Verify My Email</a>
@@ -207,17 +211,21 @@ async function respondIfAccountExists(res, { email, matric, phoneNumber }) {
         return true;
     }
 
-    const otherFilters = [];
-    if (matric !== undefined && matric !== null && matric !== "") otherFilters.push({ matric });
-    if (phoneNumber !== undefined && phoneNumber !== null && phoneNumber !== "") otherFilters.push({ phoneNumber });
+    // Matric first, then phone, so the client can point at the exact field.
+    const fieldChecks = [
+        { field: "matric", value: matric, message: "This matric number is already registered to another account." },
+        { field: "phoneNumber", value: phoneNumber, message: "This phone number is already registered to another account." },
+    ];
 
-    if (otherFilters.length) {
-        const byDetails = await User.findOne({ $or: otherFilters });
-        if (byDetails) {
+    for (const { field, value, message } of fieldChecks) {
+        if (value === undefined || value === null || value === "") continue;
+        const existing = await User.findOne({ [field]: value });
+        if (existing) {
             res.status(409).json({
                 success: false,
                 code: "ACCOUNT_EXISTS",
-                message: "An account with these details already exists.",
+                field,
+                message,
             });
             return true;
         }
@@ -235,11 +243,10 @@ module.exports.usersignup = async (req, res) => {
         const email = normalizeEmail(req.body.email);
         const {
             fullName,
-            matric,
             gender,
-            phoneNumber,
             password,
         } = req.body;
+        let { matric, phoneNumber } = req.body;
 
         if (!isValidEmail(email)) {
             return res.status(400).json({
@@ -250,6 +257,17 @@ module.exports.usersignup = async (req, res) => {
 
         // Rejects objects like {"$regex": ...} before they reach a query.
         if (![fullName, matric, gender, phoneNumber, password].every((value) => typeof value === "string" && value)) {
+            return res.status(400).json({
+                success: false,
+                message: "All fields are required",
+            });
+        }
+
+        // Normalize so formatting differences can't create near-duplicates.
+        matric = matric.trim().toUpperCase();
+        phoneNumber = phoneNumber.trim();
+
+        if (!matric || !phoneNumber) {
             return res.status(400).json({
                 success: false,
                 message: "All fields are required",
@@ -392,6 +410,7 @@ module.exports.userlogin = async (req, res) => {
                 phoneNumber: user.phoneNumber,
                 gender: user.gender,
                 role: user.role,
+                profileImageUrl: user.profileImageUrl || null,
             },
         });
     } catch (error) {
@@ -914,4 +933,125 @@ module.exports.resendverification = async (req, res) => {
     }
 
     return res.status(200).json(VERIFICATION_RESENT_BODY);
+}
+
+// Public profile shape shared by GET /profile and the upload response.
+const toProfileUser = (user) => ({
+    id: user._id,
+    fullName: user.fullName,
+    email: user.email,
+    matric: user.matric,
+    phoneNumber: user.phoneNumber,
+    gender: user.gender,
+    role: user.role,
+    profileImageUrl: user.profileImageUrl || null,
+});
+
+// Best-effort Cloudinary delete; failures are only logged.
+const safeDeleteImage = async (publicId, label) => {
+    try {
+        await deleteImage(publicId);
+    } catch (error) {
+        logError(label, error);
+    }
+};
+
+module.exports.getprofile = async (req, res) => {
+    try {
+        const user = await User.findById(req.user?.id).lean();
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found",
+            });
+        }
+
+        return res.status(200).json({ success: true, user: toProfileUser(user) });
+    } catch (error) {
+        logError("Get profile failed:", error);
+        return res.status(500).json({ success: false, message: "Server error" });
+    }
+}
+
+// Upload new image -> atomically save it (learning the previous public ID)
+// -> delete the previous asset. The old asset is never removed before the
+// new one is stored, and a failed save removes the just-uploaded asset.
+module.exports.uploadprofileimage = async (req, res) => {
+    const userId = req.user?.id;
+
+    if (!req.file || !req.file.buffer || !req.file.buffer.length) {
+        return res.status(400).json({
+            success: false,
+            code: "INVALID_IMAGE",
+            message: "Please choose an image to upload.",
+        });
+    }
+
+    let uploaded;
+    try {
+        uploaded = await uploadImage(req.file.buffer, {
+            folder: PROFILE_IMAGE_FOLDER,
+            transformation: [{ width: 512, height: 512, crop: "fill", gravity: "face" }],
+            resource_type: "image",
+            // Re-encoded on upload, so only a plain raster image is ever stored.
+            allowed_formats: ["jpg", "jpeg", "png", "webp"],
+            format: "webp",
+        });
+    } catch (error) {
+        logError("Profile image upload failed:", error);
+        return res.status(502).json({
+            success: false,
+            code: "UPLOAD_FAILED",
+            message: "Could not upload the image. Please try again.",
+        });
+    }
+
+    const newPublicId = uploaded?.public_id;
+    const newUrl = uploaded?.secure_url;
+
+    if (!newPublicId || !newUrl) {
+        if (newPublicId) await safeDeleteImage(newPublicId, "Profile image cleanup failed:");
+        return res.status(502).json({
+            success: false,
+            code: "UPLOAD_FAILED",
+            message: "Could not upload the image. Please try again.",
+        });
+    }
+
+    let previous;
+    try {
+        previous = await User.findOneAndUpdate(
+            { _id: userId },
+            { $set: { profileImageUrl: newUrl, profileImagePublicId: newPublicId } },
+            { returnDocument: "before" }
+        ).select("+profileImagePublicId");
+    } catch (error) {
+        logError("Profile image save failed:", error);
+        await safeDeleteImage(newPublicId, "Profile image cleanup failed:");
+        return res.status(500).json({ success: false, message: "Server error" });
+    }
+
+    if (!previous) {
+        await safeDeleteImage(newPublicId, "Profile image cleanup failed:");
+        return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const oldPublicId = previous.profileImagePublicId;
+    if (oldPublicId && oldPublicId !== newPublicId) {
+        // Fire-and-forget: never blocks or fails the response.
+        safeDeleteImage(oldPublicId, "Old profile image delete failed:");
+    }
+
+    req.io?.emit("users:updated", { userId: String(previous._id) });
+
+    const user = toProfileUser(previous);
+    user.profileImageUrl = newUrl;
+
+    return res.status(200).json({
+        success: true,
+        message: "Profile picture updated",
+        profileImageUrl: newUrl,
+        user,
+    });
 }
