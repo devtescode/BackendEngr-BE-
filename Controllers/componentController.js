@@ -74,11 +74,17 @@ function getScalarQueryValue(value) {
 function parseIntegerParam(value, fallback) {
   const raw = getScalarQueryValue(value);
 
-  if (raw === undefined || raw === null || raw === "") {
+  if (raw === undefined || raw === null) {
     return fallback;
   }
 
-  const parsed = Number(raw);
+  const normalized = typeof raw === "string" ? raw.trim() : String(raw);
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  const parsed = Number(normalized);
 
   return Number.isSafeInteger(parsed) ? parsed : fallback;
 }
@@ -116,7 +122,10 @@ function sanitizeSearch(value) {
     return "";
   }
 
-  return raw.trim().slice(0, MAX_SEARCH_LENGTH);
+  return raw
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .trim()
+    .slice(0, MAX_SEARCH_LENGTH);
 }
 
 function sanitizeCategory(value) {
@@ -217,7 +226,10 @@ module.exports.getPaginatedComponents = async (req, res) => {
       components = await Component.aggregate([
         { $match: filter },
         {
-          $addFields: {
+          // Project before sorting so the blocking sort only carries the
+          // card fields plus the computed key, not full documents.
+          $project: {
+            ...COMPONENT_CARD_PROJECTION,
             [UPDATED_AT_SORT_FIELD]: {
               $ifNull: ["$updatedAt", "$createdAt"],
             },

@@ -13,6 +13,7 @@ const {
     uploadprofileimage,
 } = require("../Controllers/user.controllers")
 const {
+    catalogLimiter,
     forgotPasswordLimiter,
     resetPasswordLimiter,
     signupLimiter,
@@ -46,7 +47,7 @@ router.get("/reset-password/:token", resetPasswordLimiter, validateresettoken)
 router.post("/reset-password/:token", resetPasswordLimiter, resetpassword)
 
 // Public component listing with server-side pagination.
-router.get("/components", getPaginatedComponents)
+router.get("/components", catalogLimiter, getPaginatedComponents)
 
 router.post("/addtocart", verifyToken, addToCart)
 router.put(

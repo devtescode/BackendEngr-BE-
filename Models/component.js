@@ -71,7 +71,7 @@ componentSchema.index({ updatedAt: -1, _id: -1 });
 
 // The category chips filter the listing before it is sorted and paged, so
 // the filter field leads the compound index for both sort orders.
-componentSchema.index({ category: 1, createdAt: -1 });
-componentSchema.index({ category: 1, updatedAt: -1 });
+componentSchema.index({ category: 1, createdAt: -1, _id: -1 });
+componentSchema.index({ category: 1, updatedAt: -1, _id: -1 });
 
 module.exports = mongoose.model("Component", componentSchema);

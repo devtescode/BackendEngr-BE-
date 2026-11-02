@@ -5,6 +5,18 @@ const tooManyRequests = (message) => (req, res, next, options) =>
     .status(options.statusCode)
     .json({ success: false, code: "RATE_LIMITED", message });
 
+// Public catalog: generous enough for pagination/search, strict enough to
+// stop unauthenticated clients from hammering the database.
+const catalogLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: tooManyRequests(
+    "Too many catalog requests. Please wait a moment and try again."
+  ),
+});
+
 // Forgot password: limits reset-email spam per client IP.
 const forgotPasswordLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -75,6 +87,7 @@ const profileImageLimiter = rateLimit({
 });
 
 module.exports = {
+  catalogLimiter,
   forgotPasswordLimiter,
   resetPasswordLimiter,
   signupLimiter,
