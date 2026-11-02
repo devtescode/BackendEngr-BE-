@@ -29,6 +29,17 @@ function isEmailConfigured() {
   return emailStub.mode !== "unconfigured";
 }
 
+function getEmailStatus() {
+  const configured = isEmailConfigured();
+  return {
+    provider: "stub",
+    configured,
+    requestedProvider: "stub",
+    gmailConfigured: configured,
+    sendbyteConfigured: false,
+  };
+}
+
 async function sendEmail(message) {
   if (emailStub.mode === "fail") {
     const err = new Error("stubbed email failure");
@@ -49,7 +60,7 @@ const emailPath = require.resolve(path.join(__dirname, "..", "utils", "email.js"
 const stubModule = new Module(emailPath, module);
 stubModule.filename = emailPath;
 stubModule.loaded = true;
-stubModule.exports = { sendEmail, isEmailConfigured };
+stubModule.exports = { sendEmail, isEmailConfigured, getEmailStatus };
 require.cache[emailPath] = stubModule;
 
 // ---------------------------------------------------------------------------

@@ -5,11 +5,12 @@ const axios = require("axios");
 const SENDBYTE_BASE_URL = "https://api.sendbyte.africa";
 
 class EmailDeliveryError extends Error {
-  constructor(message, { status, code } = {}) {
+  constructor(message, { status, code, details } = {}) {
     super(message);
     this.name = "EmailDeliveryError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -54,8 +55,9 @@ async function sendEmail({ to, subject, html, text, tags, idempotencyKey }) {
   } catch (error) {
     const status = error.response?.status;
     const code = error.response?.data?.error?.code || error.code || "unknown";
+    const details = error.response?.data?.error?.message || error.message;
 
-    throw new EmailDeliveryError("Email delivery failed", { status, code });
+    throw new EmailDeliveryError("Email delivery failed", { status, code, details });
   }
 }
 

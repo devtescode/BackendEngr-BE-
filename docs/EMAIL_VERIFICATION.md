@@ -35,14 +35,22 @@ Any rate-limited endpoint can return 429 `RATE_LIMITED`.
 
 - `FRONTEND_URL` — origin used to build verification (and reset/payment) links.
   Trailing slashes are stripped. **In production it must be the public production
-  frontend origin, never `localhost`.**
-- `EMAIL_PROVIDER` — `gmail` or `sendbyte` (default).
+  frontend origin, never `localhost`.** If it is missing or still points at
+  localhost on a production host, the server falls back to the request `Origin`
+  and then to `https://eu-hardware-store.vercel.app`.
+- `EMAIL_PROVIDER` — `gmail` or `sendbyte`. Optional: when unset (or when the
+  requested provider has no credentials), the server automatically uses whichever
+  provider is actually configured.
 - SendByte: `SENDBYTE_API_KEY`, `SENDBYTE_FROM`.
 - Gmail: `GMAIL_USER`, `GMAIL_APP_PASSWORD`.
 - `URI` — MongoDB connection string (also used by the migration script).
 
-If email isn't configured, signup still creates the account and returns
+If no email provider is configured, signup still creates the account and returns
 `VERIFICATION_EMAIL_FAILED`; resend returns 503 `EMAIL_SEND_FAILED`.
+
+To confirm a deployment's mail setup without sending anything, call
+`GET /engineering/email-status`. It returns the selected provider, whether it is
+configured, and the frontend origin used in links (never secrets).
 
 ## Legacy users
 

@@ -4,7 +4,8 @@ const mongoose = require("mongoose")
 const bcrypt = require("bcryptjs")
 const crypto = require("crypto")
 const User = require("../Models/user.models");
-const { sendEmail, isEmailConfigured } = require("../utils/email");
+const { sendEmail, isEmailConfigured, getEmailStatus } = require("../utils/email");
+const { getFrontendUrl } = require("../utils/frontendUrl");
 const uploadImage = require("../utils/uploadImage");
 const { deleteImage } = uploadImage;
 env.config()
@@ -106,8 +107,9 @@ function issueVerificationToken() {
     };
 }
 
-const isVerificationEmailConfigured = () =>
-    isEmailConfigured() && Boolean(process.env.FRONTEND_URL);
+// FRONTEND_URL has a safe production fallback now (utils/frontendUrl.js), so
+// only the email provider itself has to be configured for sending to work.
+const isVerificationEmailConfigured = () => isEmailConfigured();
 
 function buildVerificationEmail({ fullName, verifyUrl }) {
     const name = escapeHtml(fullName || "there");
@@ -149,15 +151,14 @@ function buildVerificationEmail({ fullName, verifyUrl }) {
 }
 
 // Throws if email isn't configured or the provider rejects the message.
-async function sendVerificationEmail({ to, fullName, rawToken }) {
+async function sendVerificationEmail({ to, fullName, rawToken, req }) {
     if (!isVerificationEmailConfigured()) {
-        const error = new Error("Email provider or FRONTEND_URL is not configured");
+        const error = new Error("Email provider is not configured");
         error.code = "EMAIL_NOT_CONFIGURED";
         throw error;
     }
 
-    const frontendUrl = process.env.FRONTEND_URL.replace(/\/+$/, "");
-    const verifyUrl = `${frontendUrl}/verify-email/${rawToken}`;
+    const verifyUrl = `${getFrontendUrl(req)}/verify-email/${rawToken}`;
     const { html, text } = buildVerificationEmail({ fullName, verifyUrl });
 
     await sendEmail({
@@ -171,7 +172,13 @@ async function sendVerificationEmail({ to, fullName, rawToken }) {
 }
 
 const logError = (label, error) =>
-    console.error(label, { name: error?.name, status: error?.status, code: error?.code });
+    console.error(label, {
+        name: error?.name,
+        status: error?.status,
+        code: error?.code,
+        message: error?.message,
+        details: error?.details,
+    });
 
 const UNVERIFIED_ACCOUNT_TTL_DAYS = 7;
 
@@ -236,6 +243,19 @@ async function respondIfAccountExists(res, { email, matric, phoneNumber }) {
 
 module.exports.userwelcome = async (req, res) => {
     res.status(200).json({ message: "Welcome to Engineering Backend" })
+}
+
+// Safe diagnostics for deployment checks: proves whether the live server can
+// actually send email and which origin its links will point at. Never returns
+// secrets, so it is safe to hit after a deploy.
+module.exports.emailstatus = async (req, res) => {
+    const status = getEmailStatus();
+
+    return res.status(status.configured ? 200 : 503).json({
+        success: status.configured,
+        email: status,
+        frontendUrl: getFrontendUrl(req),
+    });
 }
 
 module.exports.usersignup = async (req, res) => {
@@ -306,7 +326,7 @@ module.exports.usersignup = async (req, res) => {
         }
 
         try {
-            await sendVerificationEmail({ to: user.email, fullName: user.fullName, rawToken });
+            await sendVerificationEmail({ to: user.email, fullName: user.fullName, rawToken, req });
         } catch (error) {
             // Never log the token or the email body.
             logError("Signup verification email failed:", error);
@@ -515,8 +535,8 @@ module.exports.forgotpassword = async (req, res) => {
         });
     }
 
-    if (!isEmailConfigured() || !process.env.FRONTEND_URL) {
-        console.error("Forgot password: email provider (EMAIL_PROVIDER + its credentials) or FRONTEND_URL is not set");
+    if (!isEmailConfigured()) {
+        console.error("Forgot password: email provider (EMAIL_PROVIDER + its credentials) is not set");
         return res.status(503).json({
             success: false,
             message: "Password reset is temporarily unavailable. Please try again later.",
@@ -539,7 +559,7 @@ module.exports.forgotpassword = async (req, res) => {
             }
         );
 
-        const frontendUrl = process.env.FRONTEND_URL.replace(/\/+$/, "");
+        const frontendUrl = getFrontendUrl(req);
         const resetUrl = `${frontendUrl}/reset-password/${token}`;
         const { html, text } = buildResetEmail({ fullName: user.fullName, resetUrl });
 
@@ -899,7 +919,7 @@ module.exports.resendverification = async (req, res) => {
     }
 
     try {
-        await sendVerificationEmail({ to: claimed.email, fullName: claimed.fullName, rawToken });
+        await sendVerificationEmail({ to: claimed.email, fullName: claimed.fullName, rawToken, req });
     } catch (error) {
         // Never log the token or the email body.
         logError("Resend verification email failed:", error);

@@ -8,6 +8,7 @@ const {
     resetpassword,
     verifyemail,
     resendverification,
+    emailstatus,
     getprofile,
     uploadprofileimage,
 } = require("../Controllers/user.controllers")
@@ -35,6 +36,9 @@ router.post("/userlogin", userlogin)
 // Email verification (public, rate limited). POST so link scanners can't consume tokens.
 router.post("/verify-email/:token", verifyEmailLimiter, verifyemail)
 router.post("/resend-verification", resendVerificationLimiter, resendverification)
+
+// Public, secret-free check that the deployed backend can send email.
+router.get("/email-status", emailstatus)
 
 // Password recovery (public, rate limited).
 router.post("/forgot-password", forgotPasswordLimiter, forgotpassword)

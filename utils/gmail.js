@@ -52,6 +52,7 @@ async function sendGmail({ to, subject, html, text }) {
     throw new EmailDeliveryError("Email delivery failed", {
       status: error.responseCode,
       code: error.code || "unknown",
+      details: error.message,
     });
   }
 }
