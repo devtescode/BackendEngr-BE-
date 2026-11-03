@@ -35,9 +35,9 @@ function getEmailStatus() {
     provider: "stub",
     configured,
     requestedProvider: "stub",
-    gmailConfigured: configured,
-    sendbyteConfigured: false,
-    brevoConfigured: false,
+    providers: configured ? ["stub"] : [],
+    brevoConfigured: configured,
+    sender: "test@example.com",
   };
 }
 

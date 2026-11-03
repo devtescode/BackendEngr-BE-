@@ -38,17 +38,14 @@ Any rate-limited endpoint can return 429 `RATE_LIMITED`.
   frontend origin, never `localhost`.** If it is missing or still points at
   localhost on a production host, the server falls back to the request `Origin`
   and then to `https://eu-hardware-store.vercel.app`.
-- `EMAIL_PROVIDER` — `gmail`, `sendbyte` or `brevo`. Optional: when unset (or
-  when the requested provider has no credentials), the server automatically
-  uses whichever provider is actually configured, and tries the next configured
-  provider if one fails.
-- SendByte: `SENDBYTE_API_KEY`, `SENDBYTE_FROM`.
-- Gmail: `GMAIL_USER`, `GMAIL_APP_PASSWORD`.
-- Brevo: `BREVO_API_KEY`, `BREVO_FROM` (defaults to `GMAIL_USER`). Brevo sends
-  over HTTPS, so it works on hosts that block SMTP.
+- `BREVO_API_KEY` — the only email variable required. Brevo sends over HTTPS,
+  so it works on hosts that block SMTP (Render free tier).
+- `BREVO_FROM` — optional sender. Defaults to
+  `EU Hardwarestore <datasub09@gmail.com>`; the address must be verified in
+  Brevo under "Senders & IPs".
 - `URI` — MongoDB connection string (also used by the migration script).
 
-If no email provider is configured, signup still creates the account and returns
+If `BREVO_API_KEY` is missing, signup still creates the account and returns
 `VERIFICATION_EMAIL_FAILED`; resend returns 503 `EMAIL_SEND_FAILED`.
 
 To confirm a deployment's mail setup without sending anything, call
@@ -84,21 +81,15 @@ Legacy accounts are never deleted by this.
 
 ## Production email setup
 
-> **Render free tier blocks outbound SMTP** (ports 25, 465, 587) since
-> September 2025. Gmail SMTP therefore times out there even with a valid App
-> Password. Use an HTTP provider (Brevo or SendByte) or upgrade to a paid
-> instance.
+**Brevo only.** Render's free tier blocks outbound SMTP (ports 25, 465, 587),
+so Gmail/SMTP is no longer supported. Brevo sends over HTTPS on port 443 and
+needs no domain purchase.
 
-- **Brevo** (recommended on Render free): verify the sender email under
-  "Senders & IPs", create an API key, then set `BREVO_API_KEY` and
-  `BREVO_FROM` (or `GMAIL_USER`). No domain purchase required.
-- **SendByte**: use a live key (`sk_live_...`; `sk_test_` keys are sandboxed and
-  don't deliver). `SENDBYTE_FROM` must use an address on a domain you own and
-  have verified in SendByte (SPF/DKIM/DMARC records published). A Vercel
-  subdomain cannot be verified because you don't control its DNS.
-- **Gmail**: `GMAIL_APP_PASSWORD` must be a Google App Password (requires
-  2-Step Verification), not the account password. Mail is sent from `GMAIL_USER`.
-  Gmail has daily sending limits and needs SMTP access (paid Render instance).
-- Set `FRONTEND_URL` to the production frontend origin and confirm a test signup
-  receives a working link.
-- Raw tokens are never logged or stored; only their SHA-256 hash is in the database.
+1. In Brevo, verify the sender email under **Senders & IPs → Senders**.
+2. Create an API key under **SMTP & API → API Keys**.
+3. Set `BREVO_API_KEY` in the deployment environment (optional `BREVO_FROM`).
+4. Set `FRONTEND_URL` to the production frontend origin and confirm a test
+   signup receives a working link.
+5. Check `GET /engineering/email-status` — it must report
+   `"provider":"brevo","configured":true`.
+6. Raw tokens are never logged or stored; only their SHA-256 hash is in the database.

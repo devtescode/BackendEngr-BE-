@@ -536,7 +536,7 @@ module.exports.forgotpassword = async (req, res) => {
     }
 
     if (!isEmailConfigured()) {
-        console.error("Forgot password: email provider (EMAIL_PROVIDER + its credentials) is not set");
+        console.error("Forgot password: BREVO_API_KEY is not set");
         return res.status(503).json({
             success: false,
             message: "Password reset is temporarily unavailable. Please try again later.",
@@ -857,7 +857,7 @@ module.exports.resendverification = async (req, res) => {
     }
 
     if (!isVerificationEmailConfigured()) {
-        console.error("Resend verification: email provider (EMAIL_PROVIDER + its credentials) or FRONTEND_URL is not set");
+        console.error("Resend verification: BREVO_API_KEY is not set");
         return res.status(503).json({
             success: false,
             code: "EMAIL_SEND_FAILED",
